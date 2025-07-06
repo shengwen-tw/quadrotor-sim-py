@@ -127,10 +127,6 @@ def main():
     # Set flight trajectory
     trajectory_type = "figure8"  # "circle" or "figure8"
 
-    # Print simulation setup information
-    greeting(uav_dynamics, ITERATION_TIMES,
-             init_attitude, trajectory_type)
-
     # Controller gains
     kx = np.array([10.0, 10.0, 12.0])
     kv = np.array([7.0, 7.0, 12.0])
@@ -171,6 +167,10 @@ def main():
     # Set initial UAV state to match the first point of trajectory
     uav_dynamics.x = xd[:, 0].copy()
     uav_dynamics.v = vd[:, 0].copy()
+
+    # Print simulation setup information
+    greeting(uav_dynamics, ITERATION_TIMES,
+             init_attitude, trajectory_type)
 
     # ==========================================
     #   Preallocate arrays for simulation data

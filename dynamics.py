@@ -18,7 +18,7 @@ class Dynamics:
         self.W = np.zeros(3)          # angular velocity
         self.W_dot = np.zeros(3)      # angular acceleration
 
-        self.R = np.eye(3)            # DCM rotation matrix
+        self.R = np.eye(3)            # rotation matrix
         self.R_det = 1.0              # determinant of R
         self.prv_angle = 0.0          # principal rotation vector angle
 
