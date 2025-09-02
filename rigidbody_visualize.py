@@ -7,7 +7,7 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 def rigidbody_visualize(pos_history: np.ndarray, R_history: np.ndarray,
                         *, plot_size=(10, 10, 10), skip: int = 10,
                         axis_length: float = 1.0, dt: float,
-                        ref_traj: np.ndarray = None):  # ✅ 新增 ref_traj
+                        ref_traj: np.ndarray = None):
     """
     Visualize 3D rigid body orientation and position in NED frame with quadrotor shape.
     """
