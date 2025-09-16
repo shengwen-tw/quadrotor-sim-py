@@ -68,8 +68,8 @@ def rigidbody_visualize(pos_history: np.ndarray, R_history: np.ndarray,
         motor_world_coords = (R @ motor_body_coords.T).T + p
         for j in range(4):
             motor_dots[j].set_data(
-                motor_world_coords[j, 0], motor_world_coords[j, 1])
-            motor_dots[j].set_3d_properties(motor_world_coords[j, 2])
+                [motor_world_coords[j, 0]], [motor_world_coords[j, 1]])
+            motor_dots[j].set_3d_properties([motor_world_coords[j, 2]])
 
         line1.set_data([motor_world_coords[0, 0], motor_world_coords[2, 0]],
                        [motor_world_coords[0, 1], motor_world_coords[2, 1]])
