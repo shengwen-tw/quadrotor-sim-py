@@ -221,7 +221,7 @@ def main():
         Rd = np.column_stack((b1d_proj, b2d, b3d))
 
         # Total thrust (scalar, body z-direction)
-        f_total = np.dot(f_n, Rd @ e3)
+        f_total = np.dot(f_n, uav_dynamics.R @ e3)
 
         # Attitude errors
         Rt = uav_dynamics.R.T
