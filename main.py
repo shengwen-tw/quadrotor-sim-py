@@ -26,17 +26,19 @@ def plan_circular_trajectory(radius, circum_rate, yaw_rate, dt, iteration_times)
     vd = np.zeros((3, iteration_times))
     yaw_d = np.zeros(iteration_times)
 
+    w = 2 * np.pi * circum_rate
+
     for i in range(iteration_times):
         t = i * dt
 
         # Position
-        xd[0, i] = radius * np.cos(circum_rate * t * np.pi)
-        xd[1, i] = radius * np.sin(circum_rate * t * np.pi)
+        xd[0, i] = radius * np.cos(w * t)
+        xd[1, i] = radius * np.sin(w * t)
         xd[2, i] = -1.0
 
         # Velocity
-        vd[0, i] = radius * -np.sin(circum_rate * t * np.pi)
-        vd[1, i] = radius * np.cos(circum_rate * t * np.pi)
+        vd[0, i] = radius * w * -np.sin(w * t)
+        vd[1, i] = radius * w * np.cos(w * t)
         vd[2, i] = 0.0
 
         # Yaw
@@ -148,7 +150,7 @@ def main():
     if trajectory_type == "circle":
         xd, vd, yaw_d = plan_circular_trajectory(
             radius=3.0,
-            circum_rate=0.25,
+            circum_rate=0.125,
             yaw_rate=0.05,
             dt=uav_dynamics.dt,
             iteration_times=ITERATION_TIMES
