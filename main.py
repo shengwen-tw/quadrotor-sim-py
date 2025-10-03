@@ -1,3 +1,4 @@
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -95,7 +96,7 @@ def plan_figure8_trajectory(A, B, a, b, yaw_rate, dt, iteration_times):
     return xd, vd, yaw_d
 
 
-def main():
+def main(args):
     ITERATION_TIMES = 20000
 
     math = SE3()
@@ -147,7 +148,7 @@ def main():
     #   Path Planning
     # =================
 
-    if trajectory_type == "circle":
+    if args.traj == "CIRCLE":
         xd, vd, yaw_d = plan_circular_trajectory(
             radius=3.0,
             circum_rate=0.125,
@@ -155,7 +156,7 @@ def main():
             dt=uav_dynamics.dt,
             iteration_times=ITERATION_TIMES
         )
-    elif trajectory_type == "figure8":
+    elif args.traj == "EIGHT":
         xd, vd, yaw_d = plan_figure8_trajectory(
             A=3.0, B=3.0,
             a=0.1, b=0.2,  # 1:2 ratio
@@ -477,17 +478,30 @@ def main():
     plt.legend()
 
     print("Press Ctrl+C to leave...")
-    rigidbody_visualize(pos_arr.T, R_arr.transpose(2, 0, 1),
-                        plot_size=(5, 5, 5),
-                        skip=10,
-                        axis_length=1.5,
-                        dt=uav_dynamics.dt,
-                        ref_traj=xd.T)
+    if args.animate == True:
+        rigidbody_visualize(pos_arr.T, R_arr.transpose(2, 0, 1),
+                            plot_size=(5, 5, 5),
+                            skip=10,
+                            axis_length=1.5,
+                            dt=uav_dynamics.dt,
+                            ref_traj=xd.T)
     plt.show()
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--traj', type=str, default='EIGHT', help='Trajectory to track (EIGHT or CIRCLE)')
+    parser.add_argument('--animate', type=bool, default=True, help='3D animation of flight')
+    parser.add_argument('--plot', type=bool, default=True, help='Plot flight data')
+    args = parser.parse_args()
+    return args
+
+
 if __name__ == "__main__":
+    args = parse_args()
+    print(args)
+
     try:
-        main()
+        main(args)
     except KeyboardInterrupt:
         print("Stop")
