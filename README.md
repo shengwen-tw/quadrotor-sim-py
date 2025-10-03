@@ -37,7 +37,9 @@ python ./main.py
 quadrotor-sim-py/
 ├── main.py                 # Entry point of the simulation
 ├── requirements.txt        # Required Python packages
+├── trajectory_planner.py   # Trajectory planner
 ├── dynamics.py             # Quadrotor dynamic model
+├── geometric_control.py    # Geometric tracking controller for quadrotor
 ├── se3_math.py             # SE(3) math utilities
 ├── rigidbody_visualize.py  # 3D visualization
 ├── utils/                  # Placeholder
