@@ -27,20 +27,35 @@ class Dynamics:
 
         self.math = SE3()
 
+    def state_randomize(self):
+        POS_INC_MAX = 1.5
+        VEL_INC_MAX = 1.5
+        ANG_VEL_INC_MAX = 90  # [deg/s]
+
+        self.x += np.random.uniform(-POS_INC_MAX, POS_INC_MAX, size=3)
+        self.v += np.random.uniform(-VEL_INC_MAX, VEL_INC_MAX, size=3)
+        self.W += np.deg2rad(np.random.uniform(-ANG_VEL_INC_MAX,
+                             ANG_VEL_INC_MAX, size=3))
+
+        roll = np.deg2rad(np.random.uniform(-70, 70))
+        pitch = np.deg2rad(np.random.uniform(-70, 70))
+        yaw = np.deg2rad(np.random.uniform(-180, 180))
+        self.R = SE3.euler_to_rotmat(roll, pitch, yaw)
+
     def set_position(self, x):
-        self.x = x
+        self.x = x.copy()
 
     def set_velocity(self, v):
-        self.v = v
+        self.v = v.copy()
 
     def set_rotmat(self, R):
-        self.R = R
+        self.R = R.copy()
 
     def set_force(self, f):
-        self.f = f
+        self.f = f.copy()
 
     def set_moment(self, M):
-        self.M = M
+        self.M = M.copy()
 
     def integrator_euler(self, f_now, f_dot, dt=None):
         """Euler integration"""

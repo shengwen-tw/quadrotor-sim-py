@@ -9,10 +9,9 @@ from se3_math import SE3
 from trajectory_planner import TrajectoryPlanner
 
 
-def greeting(dynamics, iteration_times, rpy, trajectory_type="unknown"):
-    roll = np.rad2deg(rpy[0])
-    pitch = np.rad2deg(rpy[1])
-    yaw = np.rad2deg(rpy[2])
+def greeting(dynamics, iteration_times, trajectory_type):
+    rpy = np.rad2deg(SE3.rotmat_to_euler(dynamics.R))
+    W = np.rad2deg(dynamics.W)
     print(
         f"Quadrotor simulation (iterations={iteration_times}, dt={dynamics.dt:.4f} seconds)")
     print(
@@ -20,7 +19,11 @@ def greeting(dynamics, iteration_times, rpy, trajectory_type="unknown"):
     print(
         f"Initial position: ({dynamics.x[0]:.2f}m, {dynamics.x[1]:.2f}m, {dynamics.x[2]:.2f}m)")
     print(
-        f"Initial attitude (Euler angles): (roll={roll:.2f}deg, pitch={pitch:.2f}deg, yaw={yaw:.2f}deg)")
+        f"Initial velocity: ({dynamics.v[0]:.2f}m/s, {dynamics.v[1]:.2f}m/s, {dynamics.v[2]:.2f}m/s)")
+    print(
+        f"Initial attitude: (roll={rpy[0]:.2f}deg, pitch={rpy[1]:.2f}deg, yaw={rpy[2]:.2f}deg)")
+    print(
+        f"Initial angular velocity: ({W[0]:.2f}deg/s, {W[1]:.2f}deg/s, {W[2]:.2f}deg/s)")
     print("Start simulation (press Ctrl+C to leave)...")
 
 
@@ -52,8 +55,12 @@ def main(args):
     R = SE3.euler_to_rotmat(roll, pitch, yaw)
     uav_dynamics.set_rotmat(R)
 
+    # Randomize initial states
+    if args.random_start == 'yes':
+        uav_dynamics.state_randomize()
+
     # Print simulation setup information
-    greeting(uav_dynamics, args.iterations, [roll, pitch, yaw], args.traj)
+    greeting(uav_dynamics, args.iterations, args.traj)
 
     # Simulation loop
     for i in range(args.iterations):
@@ -71,6 +78,8 @@ def parse_args():
                         help='Controller (GEOMETRIC_CTRL)')
     parser.add_argument('--traj', type=str, default='EIGHT',
                         help='Trajectory to track (EIGHT or CIRCLE)')
+    parser.add_argument('--random_start', type=str, default='no',
+                        help='Random initial state')
     parser.add_argument('--animate', type=str, default="yes",
                         help='3D animation of flight')
     parser.add_argument('--plot', type=str, default="yes",
