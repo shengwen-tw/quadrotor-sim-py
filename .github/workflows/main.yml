@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: checkout 
+      uses: actions/checkout@v4
+    - name: setup python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    - name: install dependencies
+      run: pip install -r requirements.txt
+    - name: run
+      run: python ./main.py --iterations=5 --plot=no --animate=no
