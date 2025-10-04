@@ -1,5 +1,5 @@
 import numpy as np
-#from scipy.linalg import expm
+from scipy.linalg import expm
 
 from se3_math import SE3
 
@@ -115,8 +115,8 @@ class Dynamics:
         self.W = self.integrator_rk4(self.W, self.dW_dt, self.dt)
 
         # 6. Update rotation matrix with exponential mapping
-        # dR = expm(self.math.hat_map_3x3(self.W * self.dt))
-        dR = self.math.hat_map_3x3(self.W * self.dt) + np.eye(3)
+        dR = expm(self.math.hat_map_3x3(self.W * self.dt))
+        #dR = self.math.hat_map_3x3(self.W * self.dt) + np.eye(3)
         self.R = self.R @ dR
         self.R = self.math.rotmat_orthonormalize(self.R)
         self.R_det = np.linalg.det(self.R)
