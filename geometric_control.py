@@ -3,13 +3,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from dynamics import Dynamics
-from rigidbody_visualize import rigidbody_visualize
+from rigidbody_visualize import QuadRenderer
 from se3_math import SE3
 from trajectory_planner import TrajectoryPlanner
 
 
 class GeometricTrackingController:
     def __init__(self, args, uav_dynamics: Dynamics, traj_planner: TrajectoryPlanner):
+        if args.render == 'online':
+            self.viz = QuadRenderer.from_online(
+                trajectory=traj_planner.get_position_trajectory())
+        elif args.render == 'offline':
+            self.viz = None
+        else:
+            raise ValueError(f"Unknown rendering type: {self.render}")
+
         self.args = args
         self.uav_dynamics = uav_dynamics
         self.iterations = args.iterations
@@ -127,8 +135,8 @@ class GeometricTrackingController:
     def plot(self):
         if self.args.plot == 'yes':
             self.plot_graph()
-        if self.args.animate == 'yes':
-            self.animate()
+        if self.args.animate == 'yes' and self.args.render == 'offline':
+            self.render_offline()
         if self.args.plot == 'yes' or self.args.animate == 'yes':
             plt.show()
 
@@ -350,11 +358,13 @@ class GeometricTrackingController:
         plt.axis("equal")
         plt.legend()
 
-    def animate(self):
-        rigidbody_visualize(self.pos_arr.T,
-                            self.R_arr.transpose(2, 0, 1),
-                            plot_size=(5, 5, 5),
-                            skip=10,
-                            axis_length=1.5,
-                            dt=self.dt,
-                            ref_traj=self.xd.T)
+    def render(self):
+        skip = 10
+        if self.idx % skip == 0 and self.args.render == 'online':
+            self.viz.render(self.uav_dynamics.R, self.uav_dynamics.x)
+
+    def render_offline(self):
+        self.viz = QuadRenderer.from_offline(self.pos_arr, self.R_arr,
+                                             dt=self.dt,
+                                             trajectory=self.xd)
+        self.viz.animate()

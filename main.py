@@ -4,7 +4,7 @@ import numpy as np
 
 from dynamics import Dynamics
 from geometric_control import GeometricTrackingController
-from rigidbody_visualize import rigidbody_visualize
+from rigidbody_visualize import QuadRenderer
 from se3_math import SE3
 from trajectory_planner import TrajectoryPlanner
 
@@ -65,6 +65,7 @@ def main(args):
     # Simulation loop
     for i in range(args.iterations):
         controller.step()
+        controller.render()
 
     # Plot
     controller.plot()
@@ -80,8 +81,10 @@ def parse_args():
                         help='Trajectory to track (EIGHT, CIRCLE or HOVERING)')
     parser.add_argument('--random_start', type=str, default='no',
                         help='Random initial state')
+    parser.add_argument('--render', type=str, default="offline",
+                        help='Render 3D animation of flight online or offline')
     parser.add_argument('--animate', type=str, default="yes",
-                        help='3D animation of flight')
+                        help='Enable 3D animation of flight')
     parser.add_argument('--plot', type=str, default="yes",
                         help='Plot flight data')
     args = parser.parse_args()
