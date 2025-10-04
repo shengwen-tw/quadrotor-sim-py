@@ -27,19 +27,24 @@ class Dynamics:
 
         self.math = SE3()
 
-    def state_randomize(self):
+    def state_randomize(self, np_random=None):
         POS_INC_MAX = 1.5
         VEL_INC_MAX = 1.5
         ANG_VEL_INC_MAX = 90  # [deg/s]
 
-        self.x += np.random.uniform(-POS_INC_MAX, POS_INC_MAX, size=3)
-        self.v += np.random.uniform(-VEL_INC_MAX, VEL_INC_MAX, size=3)
-        self.W += np.deg2rad(np.random.uniform(-ANG_VEL_INC_MAX,
+        if np_random == None:
+            rng = np.random
+        else:
+            rng = np_random
+
+        self.x += rng.uniform(-POS_INC_MAX, POS_INC_MAX, size=3)
+        self.v += rng.uniform(-VEL_INC_MAX, VEL_INC_MAX, size=3)
+        self.W += np.deg2rad(rng.uniform(-ANG_VEL_INC_MAX,
                              ANG_VEL_INC_MAX, size=3))
 
-        roll = np.deg2rad(np.random.uniform(-70, 70))
-        pitch = np.deg2rad(np.random.uniform(-70, 70))
-        yaw = np.deg2rad(np.random.uniform(-180, 180))
+        roll = np.deg2rad(rng.uniform(-70, 70))
+        pitch = np.deg2rad(rng.uniform(-70, 70))
+        yaw = np.deg2rad(rng.uniform(-180, 180))
         self.R = SE3.euler_to_rotmat(roll, pitch, yaw)
 
     def set_position(self, x):
