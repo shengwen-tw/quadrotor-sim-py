@@ -1,10 +1,9 @@
 import argparse
-import matplotlib.pyplot as plt
 import numpy as np
 
 from dynamics import Dynamics
 from geometric_control import GeometricTrackingController
-from rigidbody_visualize import QuadRenderer
+from quadrotor import QuadrotorEnv
 from se3_math import SE3
 from trajectory_planner import TrajectoryPlanner
 
@@ -30,19 +29,21 @@ def greeting(dynamics, iteration_times, trajectory_type):
 def main(args):
     # Initialize quadrotor dynamics
     uav_dynamics = Dynamics(
-        dt=0.001, mass=1.0, J=np.diag([0.01466, 0.01466, 0.02848]))
+        dt=args.dt, mass=1.0, J=np.diag([0.01466, 0.01466, 0.02848]))
 
-    # Plan desired trajectory (i.e., reference signal)
-    traj_planner = TrajectoryPlanner(
-        args.traj, uav_dynamics.dt, args.iterations)
+    # Initialize trajectory planner
+    traj_planner = TrajectoryPlanner(args)
     traj_planner.plan()
 
     # Initialize quadrotor controller
+    controller = None
     if args.ctrl == 'GEOMETRIC_CTRL':
-        controller = GeometricTrackingController(
-            args, uav_dynamics, traj_planner)
+        controller = GeometricTrackingController(args)
     else:
         raise ValueError(f"Unknown controller: {args.ctrl}")
+
+    # Initialize quadrotor environment
+    env = QuadrotorEnv(args, uav_dynamics, controller, traj_planner)
 
     # Set initial position and velocity
     uav_dynamics.set_position(traj_planner.get_position(0))
@@ -51,7 +52,7 @@ def main(args):
     # Set initial orientation (from Euler angles)
     roll = np.deg2rad(0)
     pitch = np.deg2rad(0)
-    yaw = np.deg2rad(traj_planner.get_yaw(0))
+    yaw = traj_planner.get_yaw(0)
     R = SE3.euler_to_rotmat(roll, pitch, yaw)
     uav_dynamics.set_rotmat(R)
 
@@ -64,15 +65,17 @@ def main(args):
 
     # Simulation loop
     for i in range(args.iterations):
-        controller.step()
-        controller.render()
+        env.step()
+        env.render()
 
     # Plot
-    controller.plot()
+    env.plot()
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--dt', type=float, default=0.001,
+                        help='Time period for simulation')
     parser.add_argument('--iterations', type=int, default=20000,
                         help='Number of iterations')
     parser.add_argument('--ctrl', type=str, default='GEOMETRIC_CTRL',

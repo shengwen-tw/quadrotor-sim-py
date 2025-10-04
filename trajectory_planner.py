@@ -2,10 +2,10 @@ import numpy as np
 
 
 class TrajectoryPlanner:
-    def __init__(self, traj_type: str, dt, iterations):
-        self.traj_type = traj_type
-        self.dt = dt
-        self.iterations = iterations
+    def __init__(self, args):
+        self.traj_type = args.traj
+        self.dt = args.dt
+        self.iterations = args.iterations
 
         self.xd = np.zeros((3, self.iterations))
         self.vd = np.zeros((3, self.iterations))
