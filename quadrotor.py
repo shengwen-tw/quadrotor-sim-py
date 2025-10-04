@@ -9,12 +9,14 @@ from trajectory_planner import TrajectoryPlanner
 
 
 class QuadrotorEnv:
-    def __init__(self, args, uav_dynamics: Dynamics, controller, traj_planner: TrajectoryPlanner):
+    def __init__(self, args, uav_dynamics: Dynamics, controller,
+                 traj_planner: TrajectoryPlanner, rl_training: bool = False):
         self.args = args
         self.uav_dynamics = uav_dynamics
         self.controller = controller
         self.iterations = args.iterations
         self.dt = args.dt
+        self.rl_training = rl_training
 
         # Reference signals
         self.xd = traj_planner.get_position_trajectory()  # Desired position
@@ -27,7 +29,7 @@ class QuadrotorEnv:
 
         # Initialize online renderer
         if args.render == 'online':
-            self.viz = QuadRenderer.from_online(self.xd)
+            self.viz = QuadRenderer.from_online(trajectory=self.xd)
         elif args.render == 'offline':
             self.viz = None
         else:
@@ -40,6 +42,21 @@ class QuadrotorEnv:
         # Reset time index
         self.idx = 0
 
+        # Set initial position and velocity
+        self.uav_dynamics.set_position(self.xd[:, 0])
+        self.uav_dynamics.set_velocity(self.vd[:, 0])
+
+        # Set initial orientation (from Euler angles)
+        roll = np.deg2rad(0)
+        pitch = np.deg2rad(0)
+        yaw = self.yaw_d[0]
+        R = SE3.euler_to_rotmat(roll, pitch, yaw)
+        self.uav_dynamics.set_rotmat(R)
+
+        # Randomize initial states
+        if self.args.random_start == 'yes' or self.rl_training == True:
+            self.uav_dynamics.state_randomize()
+
         # Data for plotting
         self.time_arr = np.zeros(self.iterations)
         self.accel_arr = np.zeros((3, self.iterations))
@@ -50,15 +67,62 @@ class QuadrotorEnv:
         self.W_dot_arr = np.zeros((3, self.iterations))
         self.W_arr = np.zeros((3, self.iterations))
 
-    def step(self):
-        # Compute control input
-        uav_ctrl_M, uav_ctrl_f = self.controller.compute(self.uav_dynamics,
-                                                         self.xd[:, self.idx],
-                                                         self.vd[:, self.idx],
-                                                         self.ad,
-                                                         self.yaw_d[self.idx],
-                                                         self.Wd,
-                                                         self.W_dot_d)
+        # Current desired values (i.e., reference signals)
+        self.curr_xd = np.zeros(3)
+        self.curr_vd = np.zeros(3)
+        self.curr_ad = np.zeros(3)
+        self.curr_yaw_d = np.zeros(1)
+        self.curr_Wd = np.zeros(3)
+        self.curr_W_dot_d = np.zeros(3)
+
+        # Return data for reinforcement learning
+        obs = self.get_observation()
+        return obs, {}
+
+    def compute_reward(self):
+        """Compute rewards for reinforcement learning"""
+        pos_weight = 1.0
+        vel_weight = 0.25
+        [x, v, R, ex, ev] = self.get_observation()
+        return -float(np.linalg.norm(ex) + np.linalg.norm(ev))
+
+    def get_observation(self):
+        """Return observation for reinforcement learning"""
+        x = self.uav_dynamics.x
+        v = self.uav_dynamics.v
+        R = self.uav_dynamics.R
+        ex = x - self.curr_xd
+        ev = v - self.curr_vd
+        return [x, v, R, ex, ev]
+
+    def check_done(self):
+        if self.args.ctrl != 'RL' and self.args.ctrl != 'RL_TRAINING':
+            return False
+
+        """Check terminaion for reinforcement learning"""
+        [x, v, R, ex, ev] = self.get_observation()
+        ex_too_large = np.linalg.norm(ex) > 10.0
+        ev_too_large = np.linalg.norm(ev) > 30.0
+        return ex_too_large or ev_too_large
+
+    def next_target(self):
+        self.curr_xd = self.xd[:, self.idx]
+        self.curr_vd = self.vd[:, self.idx]
+        self.curr_ad = self.ad
+        self.curr_yaw_d = self.yaw_d[self.idx]
+        self.curr_Wd = self.Wd
+        self.curr_W_dot_d = self.W_dot_d
+        return [self.curr_xd,
+                self.curr_vd,
+                self.curr_ad,
+                self.curr_yaw_d,
+                self.curr_Wd,
+                self.curr_W_dot_d]
+
+    def step(self, action):
+        """action: control input from controller or reinfocement learning"""
+        # Acquire moment and force
+        [uav_ctrl_M, uav_ctrl_f] = action
 
         # Update quadrotor dyanmics
         self.uav_dynamics.set_moment(uav_ctrl_M)
@@ -77,6 +141,12 @@ class QuadrotorEnv:
 
         # Update time index
         self.idx += 1
+
+        # Return data for reinforcement learning
+        obs = self.get_observation()
+        reward = self.compute_reward()
+        terminated = self.check_done()
+        return obs, reward, terminated, False, {}
 
     def plot_graph(self):
         self.controller.plot_graph()

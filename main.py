@@ -45,27 +45,14 @@ def main(args):
     # Initialize quadrotor environment
     env = QuadrotorEnv(args, uav_dynamics, controller, traj_planner)
 
-    # Set initial position and velocity
-    uav_dynamics.set_position(traj_planner.get_position(0))
-    uav_dynamics.set_velocity(traj_planner.get_velocity(0))
-
-    # Set initial orientation (from Euler angles)
-    roll = np.deg2rad(0)
-    pitch = np.deg2rad(0)
-    yaw = traj_planner.get_yaw(0)
-    R = SE3.euler_to_rotmat(roll, pitch, yaw)
-    uav_dynamics.set_rotmat(R)
-
-    # Randomize initial states
-    if args.random_start == 'yes':
-        uav_dynamics.state_randomize()
-
     # Print simulation setup information
     greeting(uav_dynamics, args.iterations, args.traj)
 
     # Simulation loop
     for i in range(args.iterations):
-        env.step()
+        target = env.next_target()
+        action = controller.compute(uav_dynamics, target)
+        env.step(action)
         env.render()
 
     # Plot

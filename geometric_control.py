@@ -36,7 +36,8 @@ class GeometricTrackingController:
         self.M_arr = np.zeros((3, self.iterations))
         self.f_arr = np.zeros(self.iterations)
 
-    def compute(self, uav_dynamics: Dynamics, xd, vd, ad, yaw_d, Wd, W_dot_d):
+    def compute(self, uav_dynamics: Dynamics, target):
+        # States and parameters
         mass = uav_dynamics.mass
         J = uav_dynamics.J
         g = uav_dynamics.g
@@ -45,6 +46,9 @@ class GeometricTrackingController:
         R = uav_dynamics.R
         W = uav_dynamics.W
         Rt = R.T
+
+        # Desired values (i.e., reference signals)
+        [xd, vd, ad, yaw_d, Wd, W_dot_d] = target
 
         # Tracking errors
         ex = x - xd
