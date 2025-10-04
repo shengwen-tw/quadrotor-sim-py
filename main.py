@@ -77,7 +77,7 @@ def parse_args():
     parser.add_argument('--ctrl', type=str, default='GEOMETRIC_CTRL',
                         help='Controller (GEOMETRIC_CTRL)')
     parser.add_argument('--traj', type=str, default='EIGHT',
-                        help='Trajectory to track (EIGHT or CIRCLE)')
+                        help='Trajectory to track (EIGHT, CIRCLE or HOVERING)')
     parser.add_argument('--random_start', type=str, default='no',
                         help='Random initial state')
     parser.add_argument('--animate', type=str, default="yes",
