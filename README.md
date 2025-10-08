@@ -31,6 +31,13 @@ Then run the simulation:
 python ./main.py
 ```
 
+## Experimental
+
+```
+python train_rl.py --traj HOVERING --iterations 1000 --n-envs 16 --total-steps 1000000000000
+tensorboard --logdir runs/ppo_quadrotor
+```
+
 ## Project Structure
 
 ```
