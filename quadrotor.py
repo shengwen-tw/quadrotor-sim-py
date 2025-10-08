@@ -14,28 +14,37 @@ from trajectory_planner import TrajectoryPlanner
 class QuadrotorEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, args, uav_dynamics: Dynamics,
-                 controller, traj_planner: TrajectoryPlanner,
+    def __init__(self, args,
+                 uav_dynamics=None, controller=None,
                  render_mode=None, rl_training: bool = False):
         super().__init__()
-
         self.args = args
-        self.uav_dynamics = uav_dynamics
         self.controller = controller
         self.iterations = args.iterations
         self.dt = args.dt
         self.render_mode = render_mode
         self.rl_training = rl_training
 
+        # Initialize quadrotor dynamics
+        if uav_dynamics == None:
+            self.uav_dynamics = Dynamics(
+                dt=self.dt, mass=1.0, J=np.diag([0.01466, 0.01466, 0.02848]))
+        else:
+            self.uav_dynamics = uav_dynamics
+
+        # Initialize trajectory planner
+        traj_planner = TrajectoryPlanner(args)
+        traj_planner.plan()
+
         # Initialize observation space for reinforcement learning
         # position error (3x1) + velocity error (3x1) + euler angles (3x1)
+        pos_vel_low = np.full(6, -np.inf, dtype=np.float32)
+        pos_vel_high = np.full(6, +np.inf, dtype=np.float32)
         euler_low = np.array([-np.pi, -np.pi/2, -np.pi], dtype=np.float32)
         euler_high = np.array([+np.pi, +np.pi/2, +np.pi], dtype=np.float32)
         self.observation_space = spaces.Box(
-            low=np.concatenate(
-                [np.full(6, -np.inf, dtype=np.float32), euler_low]),
-            high=np.concatenate(
-                [np.full(6, +np.inf, dtype=np.float32), euler_high]),
+            low=np.concatenate([pos_vel_low, euler_low]),
+            high=np.concatenate([pos_vel_high, euler_high]),
             dtype=np.float32
         )
 
@@ -44,7 +53,7 @@ class QuadrotorEnv(gym.Env):
         ROLL_CTRL_MAX = +np.deg2rad(50)
         PITCH_CTRL_MIN = -np.deg2rad(50)
         PITCH_CTRL_MAX = +np.deg2rad(50)
-        hover = uav_dynamics.mass * uav_dynamics.g
+        hover = self.uav_dynamics.mass * self.uav_dynamics.g
         THRUST_MIN = -hover
         THRUST_MAX = +hover
         self.action_space = spaces.Box(
@@ -92,8 +101,13 @@ class QuadrotorEnv(gym.Env):
             self.np_random, _ = gym.utils.seeding.np_random(seed)
 
         # Set initial position and velocity
-        self.uav_dynamics.set_position(self.xd[:, 0])
-        self.uav_dynamics.set_velocity(self.vd[:, 0])
+        if self.args.ctrl == 'RL':
+            # TODO: Adjust this later
+            self.uav_dynamics.set_position(np.zeros(3))
+            self.uav_dynamics.set_velocity(np.zeros(3))
+        else:
+            self.uav_dynamics.set_position(self.xd[:, 0])
+            self.uav_dynamics.set_velocity(self.vd[:, 0])
 
         # Set initial orientation (from Euler angles)
         roll = np.deg2rad(0)
@@ -107,7 +121,8 @@ class QuadrotorEnv(gym.Env):
             self.uav_dynamics.state_randomize(self.np_random)
 
         # Reset controller
-        self.controller.reset()
+        if self.controller != None:
+            self.controller.reset()
 
         # Data for plotting
         self.time_arr = np.zeros(self.iterations)
@@ -120,12 +135,12 @@ class QuadrotorEnv(gym.Env):
         self.W_arr = np.zeros((3, self.iterations))
 
         # Current desired values (i.e., reference signals)
-        self.curr_xd = np.zeros(3)
-        self.curr_vd = np.zeros(3)
-        self.curr_ad = np.zeros(3)
-        self.curr_yaw_d = 0
-        self.curr_Wd = np.zeros(3)
-        self.curr_W_dot_d = np.zeros(3)
+        self.curr_xd = self.xd[:, 0]
+        self.curr_vd = self.vd[:, 0]
+        self.curr_ad = self.ad
+        self.curr_yaw_d = self.yaw_d[0]
+        self.curr_Wd = self.Wd
+        self.curr_W_dot_d = self.W_dot_d
 
         # Return data for reinforcement learning
         obs = self.get_observation()
@@ -146,7 +161,7 @@ class QuadrotorEnv(gym.Env):
 
     def check_terminated(self):
         """Check terminaion for reinforcement learning"""
-        if self.args.ctrl != 'RL' and self.args.ctrl != 'RL_TRAINING':
+        if self.args.ctrl != 'RL':
             return False
 
         obs = self.get_observation()
@@ -158,13 +173,15 @@ class QuadrotorEnv(gym.Env):
     def check_truncated(self):
         return self.idx >= self.iterations
 
-    def next_target(self):
+    def update_desired_state(self):
         self.curr_xd = self.xd[:, self.idx]
         self.curr_vd = self.vd[:, self.idx]
         self.curr_ad = self.ad
         self.curr_yaw_d = self.yaw_d[self.idx]
         self.curr_Wd = self.Wd
         self.curr_W_dot_d = self.W_dot_d
+
+    def get_desired_state(self):
         return [self.curr_xd,
                 self.curr_vd,
                 self.curr_ad,
@@ -189,7 +206,7 @@ class QuadrotorEnv(gym.Env):
         uav_ctrl_M = None
         uav_ctrl_f = None
 
-        if self.args.ctrl == 'RL' or self.args.ctrl == 'RL_TRAINING':
+        if self.args.ctrl == 'RL':
             # For reinforcement learning, the action input is desired roll,
             # pitch, and thrust commands
             [uav_ctrl_M, uav_ctrl_f] = self.execute_rl_action(action)
@@ -216,15 +233,20 @@ class QuadrotorEnv(gym.Env):
         # Update time index
         self.idx += 1
 
+        # Update desired state from next
+        truncated = self.check_truncated()
+        if truncated == False:
+            self.update_desired_state()
+
         # Return data for reinforcement learning
         obs = self.get_observation()
         reward = self.compute_reward()
         terminated = self.check_terminated()
-        truncated = self.check_truncated()
         return obs, reward, terminated, truncated, {}
 
     def plot_graph(self):
-        self.controller.plot_graph()
+        if self.controller != None:
+            self.controller.plot_graph()
 
         # Plot attitude (euler angles)
         plt.figure("Attitude (euler angles)")

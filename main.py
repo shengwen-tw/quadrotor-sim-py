@@ -5,7 +5,6 @@ from dynamics import Dynamics
 from geometric_control import GeometricTrackingController
 from quadrotor import QuadrotorEnv
 from se3_math import SE3
-from trajectory_planner import TrajectoryPlanner
 
 
 def greeting(dynamics, iteration_times, trajectory_type):
@@ -27,14 +26,6 @@ def greeting(dynamics, iteration_times, trajectory_type):
 
 
 def main(args):
-    # Initialize quadrotor dynamics
-    uav_dynamics = Dynamics(
-        dt=args.dt, mass=1.0, J=np.diag([0.01466, 0.01466, 0.02848]))
-
-    # Initialize trajectory planner
-    traj_planner = TrajectoryPlanner(args)
-    traj_planner.plan()
-
     # Initialize quadrotor controller
     controller = None
     if args.ctrl == 'GEOMETRIC_CTRL':
@@ -43,15 +34,15 @@ def main(args):
         raise ValueError(f"Unknown controller: {args.ctrl}")
 
     # Initialize quadrotor environment
-    env = QuadrotorEnv(args, uav_dynamics, controller, traj_planner)
+    env = QuadrotorEnv(args, controller=controller)
 
-    # Print simulation setup information
-    greeting(uav_dynamics, args.iterations, args.traj)
+    # Print environment
+    greeting(env.uav_dynamics, args.iterations, args.traj)
 
     # Simulation loop
     for i in range(args.iterations):
-        target = env.next_target()
-        action = controller.compute(uav_dynamics, target)
+        desired_state = env.get_desired_state()
+        action = controller.compute(env.uav_dynamics, desired_state)
         env.step(action)
         env.render()
 

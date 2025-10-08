@@ -50,7 +50,7 @@ class TrajectoryPlanner:
     def get_yaw(self, idx: int):
         return self.yaw_d[idx]
 
-    def plan_hovering_trajectory(self, position, yaw_rate):
+    def plan_hovering_trajectory(self, position, yaw_rate, plan_yaw=False):
         for i in range(self.iterations):
             t = i * self.dt
 
@@ -63,6 +63,10 @@ class TrajectoryPlanner:
             self.vd[0, i] = 0.0
             self.vd[1, i] = 0.0
             self.vd[2, i] = 0.0
+
+            # Skip yaw planning
+            if plan_yaw == False:
+                continue
 
             # Yaw
             if i == 0:

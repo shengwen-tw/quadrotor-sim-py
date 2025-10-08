@@ -38,14 +38,14 @@ class Dynamics:
             rng = np_random
 
         self.x += rng.uniform(-POS_INC_MAX, POS_INC_MAX, size=3)
-        self.v += rng.uniform(-VEL_INC_MAX, VEL_INC_MAX, size=3)
-        self.W += np.deg2rad(rng.uniform(-ANG_VEL_INC_MAX,
-                             ANG_VEL_INC_MAX, size=3))
+        #self.v += rng.uniform(-VEL_INC_MAX, VEL_INC_MAX, size=3)
+        # self.W += np.deg2rad(rng.uniform(-ANG_VEL_INC_MAX,
+        #                     ANG_VEL_INC_MAX, size=3))
 
-        roll = np.deg2rad(rng.uniform(-70, 70))
-        pitch = np.deg2rad(rng.uniform(-70, 70))
-        yaw = np.deg2rad(rng.uniform(-180, 180))
-        self.R = SE3.euler_to_rotmat(roll, pitch, yaw)
+        #roll = np.deg2rad(rng.uniform(-70, 70))
+        #pitch = np.deg2rad(rng.uniform(-70, 70))
+        #yaw = np.deg2rad(rng.uniform(-180, 180))
+        #self.R = SE3.euler_to_rotmat(roll, pitch, yaw)
 
     def set_position(self, x):
         self.x = x.copy()
