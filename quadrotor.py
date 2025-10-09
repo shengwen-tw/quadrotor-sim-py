@@ -194,9 +194,8 @@ class QuadrotorEnv(gym.Env):
         hover = self.uav_dynamics.mass * self.uav_dynamics.g
         residual = action[2]
         thrust_cmd = np.clip(hover + residual, 0.0, 3.0 * hover)
-        attitude_cmd = [roll_cmd, pitch_cmd, self.curr_yaw_d]
-        uav_ctrl_M = self.moment_controller.compute(
-            self.uav_dynamics, attitude_cmd)
+        uav_ctrl_M = self.moment_controller.run(
+            self.uav_dynamics, roll_cmd, pitch_cmd, self.curr_yaw_d)
         uav_ctrl_f = thrust_cmd * \
             self.uav_dynamics.R @ np.array([0.0, 0.0, 1.0])
         return [uav_ctrl_M, uav_ctrl_f]

@@ -18,7 +18,7 @@ class GeometricMomentController:
         self.kR = np.array([10.0, 10.0, 10.0])
         self.kW = np.array([2.0, 2.0, 2.0])
 
-    def compute(self, uav_dynamics: Dynamics, target):
+    def run(self, uav_dynamics: Dynamics, roll_d, pitch_d, yaw_d):
         # States and parameters
         mass = uav_dynamics.mass
         J = uav_dynamics.J
@@ -27,7 +27,6 @@ class GeometricMomentController:
         Rt = R.T
 
         # Desired values (i.e., reference signals)
-        [roll_d, pitch_d, yaw_d] = target
         Rd = SE3.euler_to_rotmat(roll_d, pitch_d, yaw_d)
         Wd = np.zeros(3)
         W_dot_d = np.zeros(3)
@@ -76,19 +75,19 @@ class GeometricTrackingController:
         self.M_arr = np.zeros((3, self.iterations))
         self.f_arr = np.zeros(self.iterations)
 
-    def compute(self, uav_dynamics: Dynamics, target):
-        # States and parameters
-        mass = uav_dynamics.mass
-        J = uav_dynamics.J
-        g = uav_dynamics.g
-        x = uav_dynamics.x
-        v = uav_dynamics.v
-        R = uav_dynamics.R
-        W = uav_dynamics.W
-        Rt = R.T
-
+    def run(self, env):
         # Desired values (i.e., reference signals)
-        [xd, vd, ad, yaw_d, Wd, W_dot_d] = target
+        [xd, vd, ad, yaw_d, Wd, W_dot_d] = env.get_desired_state()
+
+       # States and parameters
+        mass = env.uav_dynamics.mass
+        J = env.uav_dynamics.J
+        g = env.uav_dynamics.g
+        x = env.uav_dynamics.x
+        v = env.uav_dynamics.v
+        R = env.uav_dynamics.R
+        W = env.uav_dynamics.W
+        Rt = R.T
 
         # Tracking errors
         ex = x - xd
