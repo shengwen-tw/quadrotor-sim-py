@@ -38,6 +38,8 @@ def parse_args():
                         help='Controller (GEOMETRIC_CTRL or RL)')
     parser.add_argument('--traj', type=str, default='EIGHT',
                         help='Trajectory to track (EIGHT, CIRCLE or HOVERING)')
+    parser.add_argument('--plan_yaw_traj', type=str, default='yes',
+                        help='Plan yaw trajectory or not')
     parser.add_argument('--random_start', type=str,
                         default='no', help='Random initial state')
     parser.add_argument('--renderer', type=str, default="offline",

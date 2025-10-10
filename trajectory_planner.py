@@ -4,6 +4,7 @@ import numpy as np
 class TrajectoryPlanner:
     def __init__(self, args):
         self.traj_type = args.traj
+        self.plan_yaw_traj = args.plan_yaw_traj
         self.dt = args.dt
         self.iterations = args.iterations
 
@@ -12,22 +13,22 @@ class TrajectoryPlanner:
         self.yaw_d = np.zeros(self.iterations)
 
     def plan(self):
+        if self.plan_yaw_traj == "yes":
+            self.plan_yaw_trajectory(yaw_rate=0.05)
+
         if self.traj_type == "CIRCLE":
             self.plan_circular_trajectory(
                 radius=3.0,
                 circum_rate=0.125,
-                yaw_rate=0.05
             )
         elif self.traj_type == "EIGHT":
             self.plan_figure8_trajectory(
                 A=3.0, B=3.0,
                 a=0.1, b=0.2,  # 1:2 ratio
-                yaw_rate=0.05
             )
         elif self.traj_type == "HOVERING":
             self.plan_hovering_trajectory(
                 position=np.array([1, 2, -3]),
-                yaw_rate=0.05
             )
         else:
             raise ValueError(f"Unknown trajectory type: {self.traj_type}")
@@ -50,7 +51,14 @@ class TrajectoryPlanner:
     def get_yaw(self, idx: int):
         return self.yaw_d[idx]
 
-    def plan_hovering_trajectory(self, position, yaw_rate, plan_yaw=False):
+    def plan_yaw_trajectory(self, yaw_rate):
+        for i in range(1, self.iterations):
+            w = 2 * np.pi * yaw_rate
+            self.yaw_d[i] = self.yaw_d[i - 1] + w * self.dt
+            if self.yaw_d[i] > np.pi:
+                self.yaw_d[i] -= 2 * np.pi
+
+    def plan_hovering_trajectory(self, position):
         for i in range(self.iterations):
             t = i * self.dt
 
@@ -64,20 +72,7 @@ class TrajectoryPlanner:
             self.vd[1, i] = 0.0
             self.vd[2, i] = 0.0
 
-            # Skip yaw planning
-            if plan_yaw == False:
-                continue
-
-            # Yaw
-            if i == 0:
-                self.yaw_d[i] = 0.0
-            else:
-                self.yaw_d[i] = self.yaw_d[i - 1] + \
-                    yaw_rate * self.dt * 2 * np.pi
-                if self.yaw_d[i] > np.pi:
-                    self.yaw_d[i] -= 2 * np.pi
-
-    def plan_circular_trajectory(self, radius, circum_rate, yaw_rate):
+    def plan_circular_trajectory(self, radius, circum_rate):
         w = 2 * np.pi * circum_rate
 
         for i in range(self.iterations):
@@ -93,16 +88,7 @@ class TrajectoryPlanner:
             self.vd[1, i] = radius * w * np.cos(w * t)
             self.vd[2, i] = 0.0
 
-            # Yaw
-            if i == 0:
-                self.yaw_d[i] = 0.0
-            else:
-                self.yaw_d[i] = self.yaw_d[i - 1] + \
-                    yaw_rate * self.dt * 2 * np.pi
-                if self.yaw_d[i] > np.pi:
-                    self.yaw_d[i] -= 2 * np.pi
-
-    def plan_figure8_trajectory(self, A, B, a, b, yaw_rate):
+    def plan_figure8_trajectory(self, A, B, a, b):
         """
         Generate a Lissajous-type figure-8 trajectory.
 
@@ -129,12 +115,3 @@ class TrajectoryPlanner:
             self.vd[0, i] = A * a * omega * np.cos(a * omega * t)
             self.vd[1, i] = B * b * omega * np.cos(b * omega * t)
             self.vd[2, i] = 0.0
-
-            # Yaw
-            if i == 0:
-                self.yaw_d[i] = 0.0
-            else:
-                self.yaw_d[i] = self.yaw_d[i - 1] + \
-                    yaw_rate * self.dt * 2 * np.pi
-                if self.yaw_d[i] > np.pi:
-                    self.yaw_d[i] -= 2 * np.pi
