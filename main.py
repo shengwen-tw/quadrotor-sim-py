@@ -3,6 +3,7 @@ import numpy as np
 
 from dynamics import Dynamics
 from geometric_control import GeometricTrackingController
+from lqr_control import LQRController
 from rl_control import RLController
 from quadrotor import QuadrotorEnv
 from se3_math import SE3
@@ -34,7 +35,7 @@ def parse_args():
     parser.add_argument('--iterations', type=int,
                         default=20000, help='Number of iterations')
     parser.add_argument('--ctrl', type=str, default='GEOMETRIC_CTRL',
-                        choices=['GEOMETRIC_CTRL', 'RL'],
+                        choices=['GEOMETRIC_CTRL', 'LQR', 'RL'],
                         help='Controller (GEOMETRIC_CTRL or RL)')
     parser.add_argument('--traj', type=str, default='EIGHT',
                         help='Trajectory to track (EIGHT, CIRCLE or HOVERING)')
@@ -62,6 +63,8 @@ def main(args):
     controller = None
     if args.ctrl == 'GEOMETRIC_CTRL':
         controller = GeometricTrackingController(args)
+    if args.ctrl == 'LQR':
+        controller = LQRController(args)
     elif args.ctrl == 'RL':
         controller = RLController(args)
     else:
