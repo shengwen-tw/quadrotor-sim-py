@@ -31,11 +31,24 @@ Then run the simulation:
 python ./main.py
 ```
 
-## Experimental
+## Reinforecement Learning (Experimental)
 
+Train a RL model for quadrotor control:
 ```
 python train_rl.py --traj HOVERING --iterations 1000 --n-envs 16 --total-steps 1000000000000
 tensorboard --logdir runs/ppo_quadrotor
+```
+
+Download the pre-trained RL model:
+```
+mkdir -p runs/ppo_quadrotor/best
+cd runs/ppo_quadrotor/best
+wget https://github.com/shengwen-tw/quadrotor-sim-py/raw/refs/heads/blob/runs/ppo_quadrotor/best/best_model.zip
+```
+
+Run the simulator with the RL controller:
+```
+python main.py --ctrl=RL
 ```
 
 ## Project Structure
