@@ -29,6 +29,7 @@ def make_env(args, seed, rank, *, training: bool):
             dt=args.dt,
             iterations=args.iterations,
             traj=args.traj,
+            plan_yaw_traj='no',
             random_start="yes" if training else "no",
             renderer="online",
             animate="no",
