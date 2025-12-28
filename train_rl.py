@@ -6,6 +6,7 @@ import random
 import torch
 
 from argparse import Namespace
+from dynamics import DynamicsBatch
 from quadrotor import QuadrotorEnv
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import EvalCallback
@@ -49,48 +50,132 @@ class QuadrotorContainer:
         self.observation_space = self.envs[0].observation_space
         self.action_space = self.envs[0].action_space
 
+        # ========= NEW: build batch dynamics =========
+        quad0 = self.envs[0].env
+        dyn0 = quad0.uav_dynamics
+
+        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._dtype = torch.float32
+
+        self.dyn_batch = DynamicsBatch(
+            dt=float(dyn0.dt),
+            mass=float(dyn0.mass),
+            J=torch.as_tensor(dyn0.J, device=self._device, dtype=self._dtype),
+            batch=n_envs,
+            device=self._device,
+            dtype=self._dtype,
+        )
+
+        self._sync_batch_from_envs()
+
+    # ------------------------------------------------------------------
+    # numpy -> torch (pack)
+    @torch.no_grad()
+    def _sync_batch_from_envs(self):
+        xs, vs, Ws, Rs = [], [], [], []
+
+        for env in self.envs:
+            d = env.env.uav_dynamics
+            xs.append(d.x)
+            vs.append(d.v)
+            Ws.append(d.W)
+            Rs.append(d.R)
+
+        self.dyn_batch.x = torch.as_tensor(
+            np.stack(xs, 0), device=self._device, dtype=self._dtype
+        )
+        self.dyn_batch.v = torch.as_tensor(
+            np.stack(vs, 0), device=self._device, dtype=self._dtype
+        )
+        self.dyn_batch.W = torch.as_tensor(
+            np.stack(Ws, 0), device=self._device, dtype=self._dtype
+        )
+        self.dyn_batch.R = torch.as_tensor(
+            np.stack(Rs, 0), device=self._device, dtype=self._dtype
+        )
+
+    # torch -> numpy (unpack)
+    @torch.no_grad()
+    def _sync_envs_from_batch(self):
+        x = self.dyn_batch.x.cpu().numpy()
+        v = self.dyn_batch.v.cpu().numpy()
+        a = self.dyn_batch.a.cpu().numpy()
+        W = self.dyn_batch.W.cpu().numpy()
+        W_dot = self.dyn_batch.W_dot.cpu().numpy()
+        R = self.dyn_batch.R.cpu().numpy()
+        R_det = self.dyn_batch.R_det.cpu().numpy()
+        prv_angle = self.dyn_batch.prv_angle.cpu().numpy()
+
+        for i, env in enumerate(self.envs):
+            d = env.env.uav_dynamics
+            d.x = x[i]
+            d.v = v[i]
+            d.a = a[i]
+            d.W = W[i]
+            d.W_dot = W_dot[i]
+            d.R = R[i]
+            d.R_det = float(R_det[i])
+            d.prv_angle = float(prv_angle[i])
+
+    # ------------------------------------------------------------------
+
     def reset_all(self):
         obses, infos = [], []
         for env in self.envs:
             obs, info = env.reset()
             obses.append(obs)
             infos.append(info)
+
+        self._sync_batch_from_envs()
         return np.stack(obses, axis=0), infos
 
     def step_all(self, actions):
         obses, rewards, dones, infos = [], [], [], []
 
-        # TODO: Multi-environment rollout with tensor-based computation
+        Fs, Ms = [], []
+
+        # ---------- collect controls ----------
         for i, env in enumerate(self.envs):
-            quadrotor = env.env
+            quad = env.env
+            uav_ctrl_M, uav_ctrl_f = quad.execute_rl_action(actions[i])
+            Ms.append(uav_ctrl_M)
+            Fs.append(uav_ctrl_f)
 
-            [uav_ctrl_M, uav_ctrl_f] = quadrotor.execute_rl_action(actions[i])
+        # ---------- batch dynamics update ----------
+        self._sync_batch_from_envs()
 
-            # Update quadrotor dyanmics
-            quadrotor.uav_dynamics.set_moment(uav_ctrl_M)
-            quadrotor.uav_dynamics.set_force(uav_ctrl_f)
-            quadrotor.uav_dynamics.update()
+        self.dyn_batch.f = torch.as_tensor(
+            np.stack(Fs, 0), device=self._device, dtype=self._dtype
+        )
+        self.dyn_batch.M = torch.as_tensor(
+            np.stack(Ms, 0), device=self._device, dtype=self._dtype
+        )
 
-            # Update desired state from next
-            truncated = quadrotor.check_truncated()
-            if truncated == False:
-                quadrotor.update_desired_state()
+        with torch.no_grad():
+            self.dyn_batch.update(orthonormalize_R=True)
 
-            # Return data for reinforcement learning
-            obs = quadrotor.get_observation()
-            reward = quadrotor.compute_reward()
-            terminated = quadrotor.check_terminated()
-            info = {}
+        self._sync_envs_from_batch()
 
-            #obs, reward, terminated, truncated, info = quadrotor.step(actions[i])
+        # ---------- rest of env logic (unchanged) ----------
+        for i, env in enumerate(self.envs):
+            quad = env.env
+
+            truncated = quad.check_truncated()
+            if not truncated:
+                quad.update_desired_state()
+
+            obs = quad.get_observation()
+            reward = quad.compute_reward()
+            terminated = quad.check_terminated()
             done = bool(terminated or truncated)
 
+            info = {}
             if done:
-                info = dict(info)
                 info["terminal_observation"] = obs
                 info["TimeLimit.truncated"] = bool(
                     truncated and not terminated)
                 obs, _ = env.reset()
+                self._sync_batch_from_envs()
 
             obses.append(obs)
             rewards.append(reward)
