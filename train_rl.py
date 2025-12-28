@@ -69,6 +69,27 @@ class QuadrotorContainer:
 
         self._sync_batch_from_envs()
 
+        # ========= NEW: cache reference trajectory & per-env idx on device =========
+        quad0 = self.envs[0].env
+        self._iterations = int(quad0.iterations)
+
+        # Trajectory is shared across envs (same args.traj), cache once on device
+        # quad0.xd: (3,T), quad0.vd: (3,T), quad0.yaw_d: (T,)
+        self._xd = torch.as_tensor(quad0.xd, device=self._device, dtype=self._dtype)
+        self._vd = torch.as_tensor(quad0.vd, device=self._device, dtype=self._dtype)
+        self._yaw_d = torch.as_tensor(quad0.yaw_d, device=self._device, dtype=self._dtype)
+
+        # Per-env time index (we must maintain this because original env.step does idx += 1) :contentReference[oaicite:5]{index=5}
+        self._idx = torch.zeros(self.n_envs, device=self._device, dtype=torch.long)
+
+        # Current desired signals on device: (B,3), (B,3), (B,)
+        self._curr_xd = torch.zeros(self.n_envs, 3, device=self._device, dtype=self._dtype)
+        self._curr_vd = torch.zeros(self.n_envs, 3, device=self._device, dtype=self._dtype)
+        self._curr_yaw_d = torch.zeros(self.n_envs, device=self._device, dtype=self._dtype)
+
+        self._update_desired_batch()
+
+
     # ------------------------------------------------------------------
     # numpy -> torch (pack)
     @torch.no_grad()
@@ -119,6 +140,67 @@ class QuadrotorContainer:
             d.prv_angle = float(prv_angle[i])
 
     # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def _update_desired_batch(self):
+        # idx in [0, T-1]
+        idx = torch.clamp(self._idx, 0, self._iterations - 1)
+
+        # gather: xd[:, idx] -> (3,B) -> (B,3)
+        self._curr_xd = self._xd[:, idx].transpose(0, 1).contiguous()
+        self._curr_vd = self._vd[:, idx].transpose(0, 1).contiguous()
+        self._curr_yaw_d = self._yaw_d[idx].contiguous()
+
+        # (optional) keep env objects in sync for any code that reads curr_* from env
+        # This is cheap and only used for compatibility. You can remove later.
+        for i, env in enumerate(self.envs):
+            q = env.env
+            q.curr_xd = self._curr_xd[i].detach().cpu().numpy()
+            q.curr_vd = self._curr_vd[i].detach().cpu().numpy()
+            q.curr_yaw_d = float(self._curr_yaw_d[i].detach().cpu().item())
+            q.idx = int(self._idx[i].detach().cpu().item())
+
+    @staticmethod
+    def _rotmat_to_euler_zyx(R: torch.Tensor) -> torch.Tensor:
+        """
+        Vectorized rotmat -> euler (roll, pitch, yaw), assuming R = Rz(yaw) Ry(pitch) Rx(roll).
+        Returns (B,3).
+        """
+        # pitch = asin(-r20)
+        r20 = R[:, 2, 0]
+        pitch = torch.asin(torch.clamp(-r20, -1.0, 1.0))
+
+        # roll = atan2(r21, r22)
+        roll = torch.atan2(R[:, 2, 1], R[:, 2, 2])
+
+        # yaw = atan2(r10, r00)
+        yaw = torch.atan2(R[:, 1, 0], R[:, 0, 0])
+
+        return torch.stack([roll, pitch, yaw], dim=1)
+
+    @torch.no_grad()
+    def _compute_obs_reward_done_batch(self):
+        # obs = [ex, ev, euler]  :contentReference[oaicite:5]{index=5}
+        ex = self.dyn_batch.x - self._curr_xd  # (B,3)
+        ev = self.dyn_batch.v - self._curr_vd  # (B,3)
+        euler = self._rotmat_to_euler_zyx(self.dyn_batch.R)  # (B,3)
+
+        obs = torch.cat([ex, ev, euler], dim=1).to(torch.float32)  # (B,9)
+
+        # reward = -(||ex|| + 0.25||ev||) :contentReference[oaicite:6]{index=6}
+        rex = torch.linalg.norm(ex, dim=1)
+        rev = torch.linalg.norm(ev, dim=1)
+        reward = -(rex + 0.25 * rev)
+
+        # terminated: ||ex||>10 or ||ev||>30 :contentReference[oaicite:7]{index=7}
+        terminated = (rex > 10.0) | (rev > 30.0)
+
+        # truncated: idx >= iterations :contentReference[oaicite:8]{index=8}
+        truncated = self._idx >= self._iterations
+
+        done = terminated | truncated
+        return obs, reward, terminated, truncated, done
+
 
     # ---------------------------
     # Batch RL action -> (M, f) in torch
@@ -238,56 +320,65 @@ class QuadrotorContainer:
         return np.stack(obses, axis=0), infos
 
     def step_all(self, actions):
-        obses, rewards, dones, infos = [], [], [], []
-
-        # ---------- batch controls (parallelized execute_rl_action) ----------
-        # 先同步 state，因為 batch controller 會用到 dyn_batch.R / dyn_batch.W
+        # ---------- batch controls + batch dynamics ----------
+        # sync state into dyn_batch (PoC: still keep env as source of truth)
         self._sync_batch_from_envs()
 
-        M_t, f_t = self.execute_rl_action_batch(
-            actions)  # (B,3), (B,3) on self._device
+        # 你前面已經做了 execute_rl_action_batch 的平行化就用這個
+        M_t, f_t = self.execute_rl_action_batch(actions)
 
-        # ---------- batch dynamics update ----------
         self.dyn_batch.M = M_t
         self.dyn_batch.f = f_t
 
         with torch.no_grad():
             self.dyn_batch.update(orthonormalize_R=True)
 
+        # write back to env numpy states (so reset/monitor still works)
         self._sync_envs_from_batch()
 
-        # ---------- rest of env logic (unchanged) ----------
-        for i, env in enumerate(self.envs):
-            quad = env.env
+        # ---------- advance time index (like env.step did idx += 1) ----------
+        self._idx = self._idx + 1
 
-            truncated = quad.check_truncated()
-            if not truncated:
-                quad.update_desired_state()
+        # update desired state for new idx (only meaningful when not truncated)
+        # In original env.step: idx++ then if not truncated update_desired_state :contentReference[oaicite:9]{index=9}
+        self._update_desired_batch()
 
-            obs = quad.get_observation()
-            reward = quad.compute_reward()
-            terminated = quad.check_terminated()
-            done = bool(terminated or truncated)
+        # ---------- batch obs/reward/done ----------
+        with torch.no_grad():
+            obs_t, rew_t, terminated_t, truncated_t, done_t = self._compute_obs_reward_done_batch()
 
-            info = {}
-            if done:
-                info["terminal_observation"] = obs
-                info["TimeLimit.truncated"] = bool(
-                    truncated and not terminated)
-                obs, _ = env.reset()
+        # to numpy for SB3
+        obs_np = obs_t.detach().cpu().numpy()
+        rewards_np = rew_t.detach().cpu().numpy().astype(np.float32)
+        dones_np = done_t.detach().cpu().numpy().astype(bool)
 
-                # reset 後同步一次 batch state，避免下一步用到舊的 numpy state
-                self._sync_batch_from_envs()
+        infos = [{} for _ in range(self.n_envs)]
 
-            obses.append(obs)
-            rewards.append(reward)
-            dones.append(done)
-            infos.append(info)
+        # ---------- reset only done envs (cannot fully remove Python) ----------
+        done_idx = np.nonzero(dones_np)[0].tolist()
+        if len(done_idx) > 0:
+            # store terminal obs before overwrite
+            terminal_obs = obs_np.copy()
+
+            for i in done_idx:
+                infos[i]["terminal_observation"] = terminal_obs[i]
+                infos[i]["TimeLimit.truncated"] = bool(truncated_t[i].detach().cpu().item() and not terminated_t[i].detach().cpu().item())
+
+                # reset env i
+                obs_reset, _ = self.envs[i].reset()
+                obs_np[i] = obs_reset  # SB3 expects post-reset obs returned
+
+                # reset idx for this env
+                self._idx[i] = 0
+
+            # After resets, sync batch state from envs and refresh desired
+            self._sync_batch_from_envs()
+            self._update_desired_batch()
 
         return (
-            np.stack(obses, axis=0),
-            np.asarray(rewards, dtype=np.float32),
-            np.asarray(dones, dtype=bool),
+            obs_np,
+            rewards_np,
+            dones_np,
             infos,
         )
 
