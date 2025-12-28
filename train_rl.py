@@ -62,7 +62,27 @@ class QuadrotorContainer:
 
         # TODO: Multi-environment rollout with tensor-based computation
         for i, env in enumerate(self.envs):
-            obs, reward, terminated, truncated, info = env.step(actions[i])
+            quadrotor = env.env
+
+            [uav_ctrl_M, uav_ctrl_f] = quadrotor.execute_rl_action(actions[i])
+
+            # Update quadrotor dyanmics
+            quadrotor.uav_dynamics.set_moment(uav_ctrl_M)
+            quadrotor.uav_dynamics.set_force(uav_ctrl_f)
+            quadrotor.uav_dynamics.update()
+
+            # Update desired state from next
+            truncated = quadrotor.check_truncated()
+            if truncated == False:
+                quadrotor.update_desired_state()
+
+            # Return data for reinforcement learning
+            obs = quadrotor.get_observation()
+            reward = quadrotor.compute_reward()
+            terminated = quadrotor.check_terminated()
+            info = {}
+
+            #obs, reward, terminated, truncated, info = quadrotor.step(actions[i])
             done = bool(terminated or truncated)
 
             if done:
