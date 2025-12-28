@@ -54,7 +54,8 @@ class QuadrotorContainer:
         quad0 = self.envs[0].env
         dyn0 = quad0.uav_dynamics
 
-        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
         self._dtype = torch.float32
 
         self.dyn_batch = DynamicsBatch(
@@ -119,6 +120,113 @@ class QuadrotorContainer:
 
     # ------------------------------------------------------------------
 
+    # ---------------------------
+    # Batch RL action -> (M, f) in torch
+    # ---------------------------
+    @staticmethod
+    def _vee_map_3x3(S: torch.Tensor) -> torch.Tensor:
+        # S: (B,3,3) skew-symmetric-like
+        return torch.stack([S[:, 2, 1], S[:, 0, 2], S[:, 1, 0]], dim=1)
+
+    @staticmethod
+    def _euler_to_rotmat(roll: torch.Tensor, pitch: torch.Tensor, yaw: torch.Tensor) -> torch.Tensor:
+        # roll/pitch/yaw: (B,)
+        cr = torch.cos(roll)
+        sr = torch.sin(roll)
+        cp = torch.cos(pitch)
+        sp = torch.sin(pitch)
+        cy = torch.cos(yaw)
+        sy = torch.sin(yaw)
+
+        # Rz(yaw) * Ry(pitch) * Rx(roll)
+        B = roll.shape[0]
+        R = torch.empty((B, 3, 3), device=roll.device, dtype=roll.dtype)
+
+        R[:, 0, 0] = cy * cp
+        R[:, 0, 1] = cy * sp * sr - sy * cr
+        R[:, 0, 2] = cy * sp * cr + sy * sr
+
+        R[:, 1, 0] = sy * cp
+        R[:, 1, 1] = sy * sp * sr + cy * cr
+        R[:, 1, 2] = sy * sp * cr - cy * sr
+
+        R[:, 2, 0] = -sp
+        R[:, 2, 1] = cp * sr
+        R[:, 2, 2] = cp * cr
+        return R
+
+    @torch.no_grad()
+    def execute_rl_action_batch(self, actions: np.ndarray) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Vectorized version of QuadrotorEnv.execute_rl_action().
+
+        Input:
+            actions: np.ndarray, shape (B,3) = [roll_cmd, pitch_cmd, residual_thrust]
+        Output:
+            M: torch.Tensor (B,3)
+            f: torch.Tensor (B,3)  (world frame)
+        """
+        B = self.n_envs
+        assert actions.shape[0] == B, f"actions batch {actions.shape[0]} != n_envs {B}"
+        assert actions.shape[1] == 3, "action dim must be 3: [roll, pitch, residual_thrust]"
+
+        # 0) current state (already synced): use dyn_batch.R, dyn_batch.W on device
+        R = self.dyn_batch.R          # (B,3,3)
+        W = self.dyn_batch.W          # (B,3)
+        J = self.dyn_batch.J          # (B,3,3)
+
+        # 1) pack actions -> torch
+        act = torch.as_tensor(actions, device=self._device,
+                              dtype=self._dtype)  # (B,3)
+        roll_cmd = act[:, 0]
+        pitch_cmd = act[:, 1]
+        residual = act[:, 2]
+
+        # 2) yaw_d per-env (still read from env objects, but computation after is fully batched)
+        yaw_list = [env.env.curr_yaw_d for env in self.envs]
+        yaw_d = torch.as_tensor(np.asarray(
+            yaw_list, dtype=np.float32), device=self._device, dtype=self._dtype)  # (B,)
+
+        # 3) thrust command + force
+        hover = float(self.dyn_batch.mass) * float(self.dyn_batch.g)
+        thrust_cmd = torch.clamp(
+            hover + residual, 0.0, 3.0 * hover)            # (B,)
+        # (B,3)  == R @ e3
+        b3 = R[:, :, 2]
+        uav_ctrl_f = thrust_cmd.unsqueeze(
+            1) * b3                                # (B,3)
+
+        # 4) moment controller (vectorized GeometricMomentController.run)
+        # Gains (from GeometricMomentController) :contentReference[oaicite:2]{index=2}
+        kR = torch.tensor([10.0, 10.0, 10.0],
+                          device=self._device, dtype=self._dtype).view(1, 3)
+        kW = torch.tensor([2.0, 2.0, 2.0], device=self._device,
+                          dtype=self._dtype).view(1, 3)
+
+        Rd = self._euler_to_rotmat(
+            roll_cmd, pitch_cmd, yaw_d)                   # (B,3,3)
+        Rt = R.transpose(1, 2)
+        Rdt = Rd.transpose(1, 2)
+
+        # eR = 0.5 * vee(Rd^T R - R^T Rd)
+        # (B,3)
+        eR = 0.5 * self._vee_map_3x3(Rdt @ R - Rt @ Rd)
+
+        # eW = W - Rt Rd Wd, and Wd = 0 => eW = W
+        # (B,3)
+        eW = W
+
+        # M_ff: since Wd=0 and W_dot_d=0 in your env :contentReference[oaicite:3]{index=3}, M_ff reduces to W x (J W)
+        # (B,3)
+        JW = torch.einsum("bij,bj->bi", J, W)
+        # (B,3)
+        WJW = torch.cross(W, JW, dim=1)
+
+        uav_ctrl_M = -kR * eR - kW * eW + \
+            WJW                                    # (B,3)
+
+        return uav_ctrl_M, uav_ctrl_f
+
     def reset_all(self):
         obses, infos = [], []
         for env in self.envs:
@@ -132,24 +240,16 @@ class QuadrotorContainer:
     def step_all(self, actions):
         obses, rewards, dones, infos = [], [], [], []
 
-        Fs, Ms = [], []
-
-        # ---------- collect controls ----------
-        for i, env in enumerate(self.envs):
-            quad = env.env
-            uav_ctrl_M, uav_ctrl_f = quad.execute_rl_action(actions[i])
-            Ms.append(uav_ctrl_M)
-            Fs.append(uav_ctrl_f)
-
-        # ---------- batch dynamics update ----------
+        # ---------- batch controls (parallelized execute_rl_action) ----------
+        # 先同步 state，因為 batch controller 會用到 dyn_batch.R / dyn_batch.W
         self._sync_batch_from_envs()
 
-        self.dyn_batch.f = torch.as_tensor(
-            np.stack(Fs, 0), device=self._device, dtype=self._dtype
-        )
-        self.dyn_batch.M = torch.as_tensor(
-            np.stack(Ms, 0), device=self._device, dtype=self._dtype
-        )
+        M_t, f_t = self.execute_rl_action_batch(
+            actions)  # (B,3), (B,3) on self._device
+
+        # ---------- batch dynamics update ----------
+        self.dyn_batch.M = M_t
+        self.dyn_batch.f = f_t
 
         with torch.no_grad():
             self.dyn_batch.update(orthonormalize_R=True)
@@ -175,6 +275,8 @@ class QuadrotorContainer:
                 info["TimeLimit.truncated"] = bool(
                     truncated and not terminated)
                 obs, _ = env.reset()
+
+                # reset 後同步一次 batch state，避免下一步用到舊的 numpy state
                 self._sync_batch_from_envs()
 
             obses.append(obs)
