@@ -1,218 +1,313 @@
+# train_rl.py
 import argparse
-import gymnasium as gym
-import numpy as np
 import os
 import random
+from argparse import Namespace
+
+import gymnasium as gym
+import numpy as np
 import torch
 
-from argparse import Namespace
 from dynamics import DynamicsBatch
 from quadrotor import QuadrotorEnv
+
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv
 
 
-def set_global_seeds(seed: int):
-    os.environ["PYTHONHASHSEED"] = str(seed)
+# ----------------------------- utils -----------------------------
+def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+
+    # deterministic-ish (you can loosen these for speed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
 
-class QuadrotorContainer:
-    def __init__(self, args, n_envs: int, training: bool):
-        self.n_envs = n_envs
-        self.envs = []
+# ----------------------------- GPU-first VecEnv (NO env list + sync) -----------------------------
+class TorchQuadrotorVecEnv(VecEnv):
+    """
+    SB3 VecEnv that keeps ALL dynamics/state/obs/reward/done/reset on GPU (torch),
+    and only converts outputs to numpy at the VecEnv boundary.
 
-        for i in range(n_envs):
-            env_args = Namespace(
-                dt=args.dt,
-                iterations=args.iterations,
-                traj=args.traj,
-                plan_yaw_traj="no",
-                random_start="yes" if training else "no",
-                renderer="online",
-                animate="no",
-                plot="no",
-                ctrl="RL",
-            )
-            env = QuadrotorEnv(env_args, render_mode="human",
-                               rl_training=training)
-            env = Monitor(env)
-            env.reset(seed=args.seed + i)
-            self.envs.append(env)
+    - NO env list
+    - NO per-env python sync
+    - yaw_d handled on-device via cached trajectory table (no yaw_list loop)
+    """
 
-        self.observation_space = self.envs[0].observation_space
-        self.action_space = self.envs[0].action_space
+    def __init__(self, args, n_envs: int, training: bool, device: str | None = None):
+        self.num_envs = int(n_envs)
+        self.training = bool(training)
 
-        # ========= NEW: build batch dynamics =========
-        quad0 = self.envs[0].env
-        dyn0 = quad0.uav_dynamics
+        # ---- build ONE template env on CPU just to get spaces + trajectory arrays ----
+        # We will NOT step this env during training.
+        env_args = Namespace(
+            dt=args.dt,
+            iterations=args.iterations,
+            traj=args.traj,
+            plan_yaw_traj="no",
+            random_start="yes" if (training and args.random_start) else "no",
+            renderer="offline",  # IMPORTANT: don't create online renderer in training
+            animate="no",
+            plot="no",
+            ctrl="RL",
+        )
+        template = QuadrotorEnv(
+            env_args, render_mode=None, rl_training=training)
+        template = Monitor(template)
+        template.reset(seed=args.seed)
 
-        self._device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu")
-        self._dtype = torch.float32
+        observation_space = template.observation_space
+        action_space = template.action_space
 
-        self.dyn_batch = DynamicsBatch(
+        super().__init__(
+            num_envs=self.num_envs,
+            observation_space=observation_space,
+            action_space=action_space,
+        )
+
+        # ---- device / dtype ----
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = torch.device(device)
+        self.dtype = torch.float32
+
+        # ---- DynamicsBatch on GPU ----
+        dyn0 = template.env.uav_dynamics
+        self.dyn = DynamicsBatch(
             dt=float(dyn0.dt),
             mass=float(dyn0.mass),
-            J=torch.as_tensor(dyn0.J, device=self._device, dtype=self._dtype),
-            batch=n_envs,
-            device=self._device,
-            dtype=self._dtype,
+            J=torch.as_tensor(dyn0.J, device=self.device, dtype=self.dtype),
+            batch=self.num_envs,
+            device=self.device,
+            dtype=self.dtype,
         )
 
-        self._sync_batch_from_envs()
+        # ---- (optional) torch.compile DynamicsBatch.update() ----
+        # Important: compile ONCE; then every step() reuses the compiled graph.
+        #try:
+        #    self.dyn.enable_compile(mode="reduce-overhead")
+        #except Exception as e:
+        #    # compile can fail on some setups; fall back to eager
+        #    print(f"[WARN] torch.compile on DynamicsBatch disabled: {e}")
 
-        # ========= NEW: cache reference trajectory & per-env idx on device =========
-        quad0 = self.envs[0].env
-        self._iterations = int(quad0.iterations)
+        # ---- Cache trajectory (shared across envs) on GPU ----
+        self.iterations = int(template.env.iterations)
+        # template.env.xd: (3,T), vd: (3,T), yaw_d: (T,)
+        self._xd = torch.as_tensor(
+            template.env.xd, device=self.device, dtype=self.dtype)  # (3,T)
+        self._vd = torch.as_tensor(
+            template.env.vd, device=self.device, dtype=self.dtype)  # (3,T)
+        self._yaw_d = torch.as_tensor(
+            template.env.yaw_d, device=self.device, dtype=self.dtype)  # (T,)
 
-        # Trajectory is shared across envs (same args.traj), cache once on device
-        # quad0.xd: (3,T), quad0.vd: (3,T), quad0.yaw_d: (T,)
-        self._xd = torch.as_tensor(quad0.xd, device=self._device, dtype=self._dtype)
-        self._vd = torch.as_tensor(quad0.vd, device=self._device, dtype=self._dtype)
-        self._yaw_d = torch.as_tensor(quad0.yaw_d, device=self._device, dtype=self._dtype)
+        # ---- per-env time index on GPU ----
+        self._idx = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.long)
 
-        # Per-env time index (we must maintain this because original env.step does idx += 1) :contentReference[oaicite:5]{index=5}
-        self._idx = torch.zeros(self.n_envs, device=self._device, dtype=torch.long)
+        # desired signals on GPU (B,3), (B,3), (B,)
+        self._curr_xd = torch.zeros(
+            self.num_envs, 3, device=self.device, dtype=self.dtype)
+        self._curr_vd = torch.zeros(
+            self.num_envs, 3, device=self.device, dtype=self.dtype)
+        self._curr_yaw_d = torch.zeros(
+            self.num_envs, device=self.device, dtype=self.dtype)
 
-        # Current desired signals on device: (B,3), (B,3), (B,)
-        self._curr_xd = torch.zeros(self.n_envs, 3, device=self._device, dtype=self._dtype)
-        self._curr_vd = torch.zeros(self.n_envs, 3, device=self._device, dtype=self._dtype)
-        self._curr_yaw_d = torch.zeros(self.n_envs, device=self._device, dtype=self._dtype)
+        # random start bounds (matches your dynamics.py state_randomize POS_INC_MAX=1.5)
+        self.POS_INC_MAX = 1.5
 
+        # torch RNG (for reproducibility)
+        self._rng = torch.Generator(device=self.device)
+        self._rng.manual_seed(int(args.seed))
+
+        # cleanup template env (not used further)
+        template.close()
+
+        # internal action buffer (cpu -> gpu each step)
+        self._actions = None
+
+        # init state
+        self._reset_indices(torch.arange(
+            self.num_envs, device=self.device, dtype=torch.long))
+
+    # -------------------- VecEnv API --------------------
+    def reset(self):
+        with torch.no_grad():
+            self._reset_indices(torch.arange(
+                self.num_envs, device=self.device, dtype=torch.long))
+            obs_t = self._compute_obs()
+        return obs_t.detach().cpu().numpy()
+
+    def step_async(self, actions):
+        # actions is numpy from SB3, shape (B, act_dim)
+        self._actions = actions
+
+    def step_wait(self):
+        assert self._actions is not None, "step_async must be called before step_wait"
+
+        with torch.no_grad():
+            act = torch.as_tensor(
+                self._actions, device=self.device, dtype=self.dtype)  # (B, act_dim)
+            M, f = self._execute_rl_action_batch(act)
+
+            self.dyn.M = M
+            self.dyn.f = f
+            self.dyn.update(orthonormalize_R=True)
+
+            # advance time
+            self._idx = self._idx + 1
+            self._update_desired_batch()
+
+            # compute obs/reward/done
+            obs_t = self._compute_obs()
+            rew_t, terminated_t, truncated_t, done_t = self._compute_reward_done()
+
+            # info + terminal obs (SB3 expects numpy)
+            obs_np = obs_t.detach().cpu().numpy()
+            rew_np = rew_t.detach().cpu().numpy().astype(np.float32)
+            done_np = done_t.detach().cpu().numpy().astype(bool)
+
+            infos = [{} for _ in range(self.num_envs)]
+            if done_t.any():
+                terminal_obs_np = obs_np.copy()
+
+                done_idx = done_t.nonzero(
+                    as_tuple=False).squeeze(-1)  # GPU indices
+                term_idx = terminated_t.nonzero(as_tuple=False).squeeze(-1)
+                trunc_idx = truncated_t.nonzero(as_tuple=False).squeeze(-1)
+
+                term_set = set(term_idx.detach().cpu().tolist())
+                trunc_set = set(trunc_idx.detach().cpu().tolist())
+
+                for i in done_idx.detach().cpu().tolist():
+                    infos[i]["terminal_observation"] = terminal_obs_np[i]
+                    # SB3 convention
+                    infos[i]["TimeLimit.truncated"] = (
+                        i in trunc_set) and (i not in term_set)
+
+                # reset those envs on GPU
+                self._reset_indices(done_idx)
+
+                # return post-reset obs for those indices
+                obs_t2 = self._compute_obs()
+                obs_np2 = obs_t2.detach().cpu().numpy()
+                done_idx_np = done_idx.detach().cpu().numpy()
+                obs_np[done_idx_np] = obs_np2[done_idx_np]
+
+            self._actions = None
+            return obs_np, rew_np, done_np, infos
+
+    def close(self):
+        return
+
+    def get_attr(self, attr_name, indices=None):
+        indices = range(self.num_envs) if indices is None else indices
+        return [getattr(self, attr_name) for _ in indices]
+
+    def set_attr(self, attr_name, value, indices=None):
+        indices = range(self.num_envs) if indices is None else indices
+        for _ in indices:
+            setattr(self, attr_name, value)
+
+    def env_method(self, method_name, *args, indices=None, **kwargs):
+        raise NotImplementedError(
+            "env_method is not supported in TorchQuadrotorVecEnv.")
+
+    def env_is_wrapped(self, wrapper_class, indices=None):
+        return [False] * self.num_envs
+
+    # -------------------- Core GPU logic --------------------
+    @torch.no_grad()
+    def _reset_indices(self, idx: torch.Tensor):
+        """
+        Reset a subset of envs on GPU.
+        State reset to hover-like defaults (x=v=W=0, R=I), optional random position offset for training.
+        """
+        if idx.numel() == 0:
+            return
+
+        # zero states
+        self.dyn.x[idx] = 0.0
+        self.dyn.v[idx] = 0.0
+        self.dyn.W[idx] = 0.0
+        self.dyn.a[idx] = 0.0
+        self.dyn.W_dot[idx] = 0.0
+
+        # identity R
+        I = torch.eye(3, device=self.device, dtype=self.dtype)
+        self.dyn.R[idx] = I
+
+        # reset time index
+        self._idx[idx] = 0
+
+        # optional random start (position only)
+        if self.training:
+            noise = 2.0 * torch.rand(
+                (idx.numel(), 3),
+                generator=self._rng,
+                device=self.device,
+                dtype=self.dtype,
+            ) - 1.0
+            self.dyn.x[idx] = self.dyn.x[idx] + noise * float(self.POS_INC_MAX)
+
+        # refresh desired after resetting idx
         self._update_desired_batch()
-
-
-    # ------------------------------------------------------------------
-    # numpy -> torch (pack)
-    @torch.no_grad()
-    def _sync_batch_from_envs(self):
-        xs, vs, Ws, Rs = [], [], [], []
-
-        for env in self.envs:
-            d = env.env.uav_dynamics
-            xs.append(d.x)
-            vs.append(d.v)
-            Ws.append(d.W)
-            Rs.append(d.R)
-
-        self.dyn_batch.x = torch.as_tensor(
-            np.stack(xs, 0), device=self._device, dtype=self._dtype
-        )
-        self.dyn_batch.v = torch.as_tensor(
-            np.stack(vs, 0), device=self._device, dtype=self._dtype
-        )
-        self.dyn_batch.W = torch.as_tensor(
-            np.stack(Ws, 0), device=self._device, dtype=self._dtype
-        )
-        self.dyn_batch.R = torch.as_tensor(
-            np.stack(Rs, 0), device=self._device, dtype=self._dtype
-        )
-
-    # torch -> numpy (unpack)
-    @torch.no_grad()
-    def _sync_envs_from_batch(self):
-        x = self.dyn_batch.x.cpu().numpy()
-        v = self.dyn_batch.v.cpu().numpy()
-        a = self.dyn_batch.a.cpu().numpy()
-        W = self.dyn_batch.W.cpu().numpy()
-        W_dot = self.dyn_batch.W_dot.cpu().numpy()
-        R = self.dyn_batch.R.cpu().numpy()
-        R_det = self.dyn_batch.R_det.cpu().numpy()
-        prv_angle = self.dyn_batch.prv_angle.cpu().numpy()
-
-        for i, env in enumerate(self.envs):
-            d = env.env.uav_dynamics
-            d.x = x[i]
-            d.v = v[i]
-            d.a = a[i]
-            d.W = W[i]
-            d.W_dot = W_dot[i]
-            d.R = R[i]
-            d.R_det = float(R_det[i])
-            d.prv_angle = float(prv_angle[i])
-
-    # ------------------------------------------------------------------
 
     @torch.no_grad()
     def _update_desired_batch(self):
-        # idx in [0, T-1]
-        idx = torch.clamp(self._idx, 0, self._iterations - 1)
+        # clamp idx in [0, T-1]
+        idx = torch.clamp(self._idx, 0, self.iterations - 1)
 
         # gather: xd[:, idx] -> (3,B) -> (B,3)
         self._curr_xd = self._xd[:, idx].transpose(0, 1).contiguous()
         self._curr_vd = self._vd[:, idx].transpose(0, 1).contiguous()
         self._curr_yaw_d = self._yaw_d[idx].contiguous()
 
-        # (optional) keep env objects in sync for any code that reads curr_* from env
-        # This is cheap and only used for compatibility. You can remove later.
-        for i, env in enumerate(self.envs):
-            q = env.env
-            q.curr_xd = self._curr_xd[i].detach().cpu().numpy()
-            q.curr_vd = self._curr_vd[i].detach().cpu().numpy()
-            q.curr_yaw_d = float(self._curr_yaw_d[i].detach().cpu().item())
-            q.idx = int(self._idx[i].detach().cpu().item())
-
     @staticmethod
     def _rotmat_to_euler_zyx(R: torch.Tensor) -> torch.Tensor:
-        """
-        Vectorized rotmat -> euler (roll, pitch, yaw), assuming R = Rz(yaw) Ry(pitch) Rx(roll).
-        Returns (B,3).
-        """
-        # pitch = asin(-r20)
+        # returns (B,3) = roll, pitch, yaw
         r20 = R[:, 2, 0]
         pitch = torch.asin(torch.clamp(-r20, -1.0, 1.0))
-
-        # roll = atan2(r21, r22)
         roll = torch.atan2(R[:, 2, 1], R[:, 2, 2])
-
-        # yaw = atan2(r10, r00)
         yaw = torch.atan2(R[:, 1, 0], R[:, 0, 0])
-
         return torch.stack([roll, pitch, yaw], dim=1)
 
     @torch.no_grad()
-    def _compute_obs_reward_done_batch(self):
-        # obs = [ex, ev, euler]  :contentReference[oaicite:5]{index=5}
-        ex = self.dyn_batch.x - self._curr_xd  # (B,3)
-        ev = self.dyn_batch.v - self._curr_vd  # (B,3)
-        euler = self._rotmat_to_euler_zyx(self.dyn_batch.R)  # (B,3)
+    def _compute_obs(self) -> torch.Tensor:
+        # obs = [ex, ev, euler]  => (B,9)
+        ex = self.dyn.x - self._curr_xd
+        ev = self.dyn.v - self._curr_vd
+        euler = self._rotmat_to_euler_zyx(self.dyn.R)
+        obs = torch.cat([ex, ev, euler], dim=1).to(torch.float32)
+        return obs
 
-        obs = torch.cat([ex, ev, euler], dim=1).to(torch.float32)  # (B,9)
+    @torch.no_grad()
+    def _compute_reward_done(self):
+        ex = self.dyn.x - self._curr_xd
+        ev = self.dyn.v - self._curr_vd
 
-        # reward = -(||ex|| + 0.25||ev||) :contentReference[oaicite:6]{index=6}
         rex = torch.linalg.norm(ex, dim=1)
         rev = torch.linalg.norm(ev, dim=1)
+
         reward = -(rex + 0.25 * rev)
 
-        # terminated: ||ex||>10 or ||ev||>30 :contentReference[oaicite:7]{index=7}
         terminated = (rex > 10.0) | (rev > 30.0)
-
-        # truncated: idx >= iterations :contentReference[oaicite:8]{index=8}
-        truncated = self._idx >= self._iterations
-
+        truncated = self._idx >= self.iterations
         done = terminated | truncated
-        return obs, reward, terminated, truncated, done
+        return reward, terminated, truncated, done
 
-
-    # ---------------------------
-    # Batch RL action -> (M, f) in torch
-    # ---------------------------
+    # -------------------- RL action -> moment/force (GPU) --------------------
     @staticmethod
     def _vee_map_3x3(S: torch.Tensor) -> torch.Tensor:
-        # S: (B,3,3) skew-symmetric-like
         return torch.stack([S[:, 2, 1], S[:, 0, 2], S[:, 1, 0]], dim=1)
 
     @staticmethod
     def _euler_to_rotmat(roll: torch.Tensor, pitch: torch.Tensor, yaw: torch.Tensor) -> torch.Tensor:
-        # roll/pitch/yaw: (B,)
         cr = torch.cos(roll)
         sr = torch.sin(roll)
         cp = torch.cos(pitch)
@@ -220,7 +315,6 @@ class QuadrotorContainer:
         cy = torch.cos(yaw)
         sy = torch.sin(yaw)
 
-        # Rz(yaw) * Ry(pitch) * Rx(roll)
         B = roll.shape[0]
         R = torch.empty((B, 3, 3), device=roll.device, dtype=roll.dtype)
 
@@ -238,210 +332,51 @@ class QuadrotorContainer:
         return R
 
     @torch.no_grad()
-    def execute_rl_action_batch(self, actions: np.ndarray) -> tuple[torch.Tensor, torch.Tensor]:
+    def _execute_rl_action_batch(self, act: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Vectorized version of QuadrotorEnv.execute_rl_action().
-
-        Input:
-            actions: np.ndarray, shape (B,3) = [roll_cmd, pitch_cmd, residual_thrust]
-        Output:
-            M: torch.Tensor (B,3)
-            f: torch.Tensor (B,3)  (world frame)
+        act: (B,3) = [roll_cmd, pitch_cmd, residual_thrust]
+        returns:
+          M: (B,3)
+          f: (B,3) world frame
         """
-        B = self.n_envs
-        assert actions.shape[0] == B, f"actions batch {actions.shape[0]} != n_envs {B}"
-        assert actions.shape[1] == 3, "action dim must be 3: [roll, pitch, residual_thrust]"
-
-        # 0) current state (already synced): use dyn_batch.R, dyn_batch.W on device
-        R = self.dyn_batch.R          # (B,3,3)
-        W = self.dyn_batch.W          # (B,3)
-        J = self.dyn_batch.J          # (B,3,3)
-
-        # 1) pack actions -> torch
-        act = torch.as_tensor(actions, device=self._device,
-                              dtype=self._dtype)  # (B,3)
         roll_cmd = act[:, 0]
         pitch_cmd = act[:, 1]
         residual = act[:, 2]
 
-        # 2) yaw_d per-env (still read from env objects, but computation after is fully batched)
-        yaw_list = [env.env.curr_yaw_d for env in self.envs]
-        yaw_d = torch.as_tensor(np.asarray(
-            yaw_list, dtype=np.float32), device=self._device, dtype=self._dtype)  # (B,)
+        R = self.dyn.R  # (B,3,3)
+        W = self.dyn.W  # (B,3)
+        J = self.dyn.J  # (B,3,3)
 
-        # 3) thrust command + force
-        hover = float(self.dyn_batch.mass) * float(self.dyn_batch.g)
-        thrust_cmd = torch.clamp(
-            hover + residual, 0.0, 3.0 * hover)            # (B,)
-        # (B,3)  == R @ e3
-        b3 = R[:, :, 2]
-        uav_ctrl_f = thrust_cmd.unsqueeze(
-            1) * b3                                # (B,3)
+        # yaw_d is from GPU cached desired trajectory (NO python loop)
+        yaw_d = self._curr_yaw_d  # (B,)
 
-        # 4) moment controller (vectorized GeometricMomentController.run)
-        # Gains (from GeometricMomentController) :contentReference[oaicite:2]{index=2}
+        hover = float(self.dyn.mass) * float(self.dyn.g)
+        thrust_cmd = torch.clamp(hover + residual, 0.0, 3.0 * hover)  # (B,)
+
+        b3 = R[:, :, 2]  # R @ e3
+        uav_ctrl_f = thrust_cmd.unsqueeze(1) * b3  # (B,3)
+
+        # geometric moment controller (vectorized)
         kR = torch.tensor([10.0, 10.0, 10.0],
-                          device=self._device, dtype=self._dtype).view(1, 3)
-        kW = torch.tensor([2.0, 2.0, 2.0], device=self._device,
-                          dtype=self._dtype).view(1, 3)
+                          device=self.device, dtype=self.dtype).view(1, 3)
+        kW = torch.tensor([2.0, 2.0, 2.0], device=self.device,
+                          dtype=self.dtype).view(1, 3)
 
-        Rd = self._euler_to_rotmat(
-            roll_cmd, pitch_cmd, yaw_d)                   # (B,3,3)
+        Rd = self._euler_to_rotmat(roll_cmd, pitch_cmd, yaw_d)  # (B,3,3)
         Rt = R.transpose(1, 2)
         Rdt = Rd.transpose(1, 2)
 
-        # eR = 0.5 * vee(Rd^T R - R^T Rd)
-        # (B,3)
-        eR = 0.5 * self._vee_map_3x3(Rdt @ R - Rt @ Rd)
+        eR = 0.5 * self._vee_map_3x3(Rdt @ R - Rt @ Rd)  # (B,3)
+        eW = W  # Wd=0
 
-        # eW = W - Rt Rd Wd, and Wd = 0 => eW = W
-        # (B,3)
-        eW = W
-
-        # M_ff: since Wd=0 and W_dot_d=0 in your env :contentReference[oaicite:3]{index=3}, M_ff reduces to W x (J W)
-        # (B,3)
         JW = torch.einsum("bij,bj->bi", J, W)
-        # (B,3)
         WJW = torch.cross(W, JW, dim=1)
 
-        uav_ctrl_M = -kR * eR - kW * eW + \
-            WJW                                    # (B,3)
-
+        uav_ctrl_M = -kR * eR - kW * eW + WJW
         return uav_ctrl_M, uav_ctrl_f
 
-    def reset_all(self):
-        obses, infos = [], []
-        for env in self.envs:
-            obs, info = env.reset()
-            obses.append(obs)
-            infos.append(info)
 
-        self._sync_batch_from_envs()
-        return np.stack(obses, axis=0), infos
-
-    def step_all(self, actions):
-        # ---------- batch controls + batch dynamics ----------
-        # sync state into dyn_batch (PoC: still keep env as source of truth)
-        self._sync_batch_from_envs()
-
-        # 你前面已經做了 execute_rl_action_batch 的平行化就用這個
-        M_t, f_t = self.execute_rl_action_batch(actions)
-
-        self.dyn_batch.M = M_t
-        self.dyn_batch.f = f_t
-
-        with torch.no_grad():
-            self.dyn_batch.update(orthonormalize_R=True)
-
-        # write back to env numpy states (so reset/monitor still works)
-        self._sync_envs_from_batch()
-
-        # ---------- advance time index (like env.step did idx += 1) ----------
-        self._idx = self._idx + 1
-
-        # update desired state for new idx (only meaningful when not truncated)
-        # In original env.step: idx++ then if not truncated update_desired_state :contentReference[oaicite:9]{index=9}
-        self._update_desired_batch()
-
-        # ---------- batch obs/reward/done ----------
-        with torch.no_grad():
-            obs_t, rew_t, terminated_t, truncated_t, done_t = self._compute_obs_reward_done_batch()
-
-        # to numpy for SB3
-        obs_np = obs_t.detach().cpu().numpy()
-        rewards_np = rew_t.detach().cpu().numpy().astype(np.float32)
-        dones_np = done_t.detach().cpu().numpy().astype(bool)
-
-        infos = [{} for _ in range(self.n_envs)]
-
-        # ---------- reset only done envs (cannot fully remove Python) ----------
-        done_idx = np.nonzero(dones_np)[0].tolist()
-        if len(done_idx) > 0:
-            # store terminal obs before overwrite
-            terminal_obs = obs_np.copy()
-
-            for i in done_idx:
-                infos[i]["terminal_observation"] = terminal_obs[i]
-                infos[i]["TimeLimit.truncated"] = bool(truncated_t[i].detach().cpu().item() and not terminated_t[i].detach().cpu().item())
-
-                # reset env i
-                obs_reset, _ = self.envs[i].reset()
-                obs_np[i] = obs_reset  # SB3 expects post-reset obs returned
-
-                # reset idx for this env
-                self._idx[i] = 0
-
-            # After resets, sync batch state from envs and refresh desired
-            self._sync_batch_from_envs()
-            self._update_desired_batch()
-
-        return (
-            obs_np,
-            rewards_np,
-            dones_np,
-            infos,
-        )
-
-    def close(self):
-        for env in self.envs:
-            env.close()
-
-    def get_attr(self, attr_name, indices=None):
-        indices = range(self.n_envs) if indices is None else indices
-        return [getattr(self.envs[i], attr_name) for i in indices]
-
-    def set_attr(self, attr_name, value, indices=None):
-        indices = range(self.n_envs) if indices is None else indices
-        for i in indices:
-            setattr(self.envs[i], attr_name, value)
-
-    def env_method(self, method_name, *args, indices=None, **kwargs):
-        indices = range(self.n_envs) if indices is None else indices
-        return [getattr(self.envs[i], method_name)(*args, **kwargs) for i in indices]
-
-
-class QuadrotorVecEnv(VecEnv):
-    def __init__(self, container: QuadrotorContainer, n_envs: int):
-        self.container = container
-        self.num_envs = n_envs
-
-        super().__init__(
-            num_envs=n_envs,
-            observation_space=container.observation_space,
-            action_space=container.action_space,
-        )
-
-        self._actions = None
-        self.reset_infos = [{} for _ in range(n_envs)]
-
-    def reset(self):
-        obs, infos = self.container.reset_all()
-        self.reset_infos = infos
-        return obs
-
-    def step_async(self, actions):
-        self._actions = actions  # actions shape: (n_envs, act_dim)
-
-    def step_wait(self):
-        obs, rewards, dones, infos = self.container.step_all(self._actions)
-        return obs, rewards, dones, infos
-
-    def close(self):
-        self.container.close()
-
-    def get_attr(self, attr_name, indices=None):
-        return self.container.get_attr(attr_name, indices)
-
-    def set_attr(self, attr_name, value, indices=None):
-        return self.container.set_attr(attr_name, value, indices)
-
-    def env_method(self, method_name, *method_args, indices=None, **method_kwargs):
-        return self.container.env_method(method_name, *method_args, indices=indices, **method_kwargs)
-
-    def env_is_wrapped(self, wrapper_class, indices=None):
-        return [False] * self.num_envs
-
-
+# ----------------------------- training script -----------------------------
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dt", type=float, default=0.002)
@@ -454,6 +389,10 @@ def parse_args():
     parser.add_argument("--logdir", type=str, default="runs/ppo_quadrotor")
     parser.add_argument("--checkpoint-every", type=int, default=200000)
     parser.add_argument("--tb", type=str, default="ppo_tb")
+    parser.add_argument("--env-device", type=str,
+                        default="cuda")  # cuda or cpu
+    parser.add_argument("--ppo-device", type=str,
+                        default="auto")  # auto/cpu/cuda
     args = parser.parse_args()
     return args
 
@@ -461,37 +400,27 @@ def parse_args():
 def main():
     args = parse_args()
     os.makedirs(args.logdir, exist_ok=True)
-    set_global_seeds(args.seed)
 
-    # Build training environment
-    train_container = QuadrotorContainer(
-        args, n_envs=args.n_envs, training=True)
-    train_env = QuadrotorVecEnv(train_container, n_envs=args.n_envs)
+    set_seed(args.seed)
 
-    # Build evalution environment
-    eval_args = argparse.Namespace(
-        dt=args.dt,
-        iterations=args.iterations,
-        traj=args.traj,
-        random_start=False,
-        seed=args.seed + 10,
-        n_envs=1,
-        logdir=args.logdir
-    )
-    eval_container = QuadrotorContainer(eval_args, n_envs=1, training=False)
-    eval_env = QuadrotorVecEnv(eval_container, n_envs=1)
+    # ---- GPU dynamics VecEnv (no env list + sync) ----
+    train_env = TorchQuadrotorVecEnv(
+        args, n_envs=args.n_envs, training=True, device=args.env_device)
 
-    # Set evaluation callback
+    # eval uses 1 env
+    eval_args = Namespace(**vars(args))
+    eval_env = TorchQuadrotorVecEnv(
+        eval_args, n_envs=1, training=False, device=args.env_device)
+
     eval_callback = EvalCallback(
         eval_env,
         best_model_save_path=os.path.join(args.logdir, "best"),
         log_path=os.path.join(args.logdir, "eval"),
         eval_freq=10000,
         deterministic=True,
-        render=True
+        render=False,
     )
 
-    # Train MPL with PPO
     model = PPO(
         policy="MlpPolicy",
         env=train_env,
@@ -507,14 +436,19 @@ def main():
         tensorboard_log=args.logdir,
         seed=args.seed,
         verbose=1,
+        device="cpu",
     )
 
-    # Start training
-    model.learn(total_timesteps=args.total_steps,
-                callback=eval_callback,
-                tb_log_name=args.tb)
+    # ---- (optional) torch.compile policy network ----
+    # This can speed up forward passes, but may break on some PyTorch/SB3 combos.
+    #try:
+    #    model.policy = torch.compile(model.policy, mode="reduce-overhead")
+    #except Exception as e:
+    #    print(f"[WARN] torch.compile on policy disabled: {e}")
 
-    # Save final model
+    model.learn(total_timesteps=args.total_steps,
+                callback=eval_callback, tb_log_name=args.tb)
+
     final_path = os.path.join(args.logdir, "final_model")
     model.save(final_path)
     print(f"[OK] Saved model to: {final_path}")
