@@ -384,7 +384,7 @@ def parse_args():
     parser.add_argument("--traj", type=str, default="HOVERING")
     parser.add_argument("--random-start", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--n-envs", type=int, default=4)
+    parser.add_argument("--n-envs", type=int, default=64)
     parser.add_argument("--total-steps", type=int, default=1000000)
     parser.add_argument("--logdir", type=str, default="runs/ppo_quadrotor")
     parser.add_argument("--checkpoint-every", type=int, default=200000)
