@@ -40,12 +40,6 @@ def rotmat_orthonormalize(R: Tensor) -> Tensor:
     return torch.stack([x_n, y_n, z_n], dim=-2)  # (..., 3, 3)
 
 
-def get_prv_angle(R: Tensor) -> Tensor:
-    tr = R[..., 0, 0] + R[..., 1, 1] + R[..., 2, 2]
-    c = torch.clamp(0.5 * (tr - 1.0), -1.0, 1.0)
-    return torch.arccos(c)
-
-
 class DynamicsBatch:
     """
     Pure-tensor batched dynamics.
@@ -109,8 +103,6 @@ class DynamicsBatch:
         I = torch.eye(3, device=self.device, dtype=self.dtype).view(
             1, 3, 3).expand(B, 3, 3)
         self.R = I.clone()
-        self.R_det = torch.ones(B, device=self.device, dtype=self.dtype)
-        self.prv_angle = torch.zeros(B, device=self.device, dtype=self.dtype)
 
         # Inputs
         self.f = torch.zeros(B, 3, device=self.device, dtype=self.dtype)
@@ -217,10 +209,6 @@ class DynamicsBatch:
         if orthonormalize_R:
             self.R = rotmat_orthonormalize(self.R)
 
-        # 6) diagnostics
-        self.R_det = torch.det(self.R)
-        self.prv_angle = get_prv_angle(self.R)
-
 
 class Dynamics:
     def __init__(self, dt, mass, J=np.eye(3)):
@@ -235,10 +223,7 @@ class Dynamics:
 
         self.W = np.zeros(3)          # Angular velocity
         self.W_dot = np.zeros(3)      # Angular acceleration
-
         self.R = np.eye(3)            # Rotation matrix
-        self.R_det = 1.0              # Determinant of R
-        self.prv_angle = 0.0          # Principal rotation vector angle
 
         self.f = np.zeros(3)          # Control force [N]
         self.M = np.zeros(3)          # Control moment [Nm]
@@ -342,7 +327,3 @@ class Dynamics:
         #dR = self.math.hat_map_3x3(self.W * self.dt) + np.eye(3)
         self.R = self.R @ dR
         self.R = self.math.rotmat_orthonormalize(self.R)
-        self.R_det = np.linalg.det(self.R)
-
-        # 7. Compute angle of the principal rotation vector (PRV)
-        self.prv_angle = self.math.get_prv_angle(self.R)
