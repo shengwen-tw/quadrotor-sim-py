@@ -5,6 +5,11 @@ from torch import Tensor
 
 
 class DynamicsBatch:
+    """
+    A PyTorch-based rigid body dynamics engine supporting batched computation
+    and GPU acceleration.
+    """
+
     def __init__(self, device: str, dt: float, mass: float, J: Tensor, batch: int = 1):
         # Tensor
         self.B = batch
@@ -139,8 +144,7 @@ class DynamicsBatch:
 
     def hat_map_3x3(self, vec: Tensor) -> Tensor:
         """
-        Stack (B, 9) then convert to (B, 3, 3).
-        This creates the skew-symmetric matrix (hat map) for cross product
+        Create skew-symmetric matrix (hat map) for cross product.
         """
         vx = vec[:, 0]
         vy = vec[:, 1]
@@ -187,7 +191,7 @@ class DynamicsBatch:
     #=================#
     def update(self):
         """
-        Update the quadrotor's state for one time step.
+        Update rigid body dynamics for one time step.
 
         Integration strategy:
         - Linear velocity (v): integrated using Euler method; since
@@ -225,9 +229,9 @@ class DynamicsBatch:
 
 
 class Dynamics:
-    '''
-    Numpy wrapper of the DynamicsBatch object for signle rigidbody simulation.
-    '''
+    """
+    A NumPy wrapper for single rigid body simulation using DynamicsBatch.
+    """
 
     def __init__(self, dt, mass, J=np.eye(3), device="cpu"):
         # Convert inertia matrix from numpy to tensor type
