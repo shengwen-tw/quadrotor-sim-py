@@ -34,11 +34,36 @@ class DynamicsBatch:
         self.f = ref.new_zeros((self.B, 3))      # Control force [N]
         self.M = ref.new_zeros((self.B, 3))      # Control moment [N*m]
 
+    #=========#
+    # Setters #
+    #=========#
+    def set_time_step(self, dt: float):
+        self.dt = dt
+
+    def set_mass(self, mass: float):
+        self.mass = mass
+
+    def set_inertia_matrix(self, J: Tensor):
+        self.J = J.clone().contiguous()
+        self.J_inv = torch.linalg.inv(self.J)
+
     def set_position(self, x: Tensor):
         self.x = x.clone().contiguous()
 
     def set_velocity(self, v: Tensor):
         self.v = v.clone().contiguous()
+
+    def set_acceleration(self, a: Tensor):
+        self.a = a.clone().contiguous()
+
+    def set_rotmat(self, R: Tensor):
+        self.R = R.clone().contiguous()
+
+    def set_angular_velocity(self, W: Tensor):
+        self.W = W.clone().contiguous()
+
+    def set_angular_acceleration(self, W_dot: Tensor):
+        self.W_dot = W_dot.clone().contiguous()
 
     def set_force(self, f: Tensor):
         self.f = f.clone().contiguous()
@@ -46,8 +71,44 @@ class DynamicsBatch:
     def set_moment(self, M: Tensor):
         self.M = M.clone().contiguous()
 
-    def set_rotmat(self, R: Tensor):
-        self.R = R.clone().contiguous()
+    #=========#
+    # Getters #
+    #=========#
+    def get_time_step(self) -> float:
+        return self.dt
+
+    def get_mass(self) -> float:
+        return self.mass
+
+    def get_gravitational_acceleration(self) -> float:
+        return self.g
+
+    def get_inertia_matrix(self) -> Tensor:
+        return self.J
+
+    def get_position(self) -> Tensor:
+        return self.x
+
+    def get_velocity(self) -> Tensor:
+        return self.v
+
+    def get_acceleration(self) -> Tensor:
+        return self.a
+
+    def get_rotmat(self) -> Tensor:
+        return self.R
+
+    def get_angular_velocity(self) -> Tensor:
+        return self.W
+
+    def get_angular_acceleration(self) -> Tensor:
+        return self.W_dot
+
+    def get_force(self) -> Tensor:
+        return self.f
+
+    def get_moment(self) -> Tensor:
+        return self.M
 
     def dv_dt(self, f: Tensor) -> Tensor:
         return (self.mass * self.g * self.e3 - f) / self.mass
