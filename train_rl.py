@@ -79,20 +79,21 @@ class TorchQuadrotorVecEnv(VecEnv):
 
         # ---- DynamicsBatch on GPU ----
         dyn0 = template.env.uav_dynamics
+        J_base = torch.as_tensor(dyn0.J, device=self.device, dtype=self.dtype)
+        J = J_base.clone().expand(self.num_envs, 3, 3).contiguous()
         self.dyn = DynamicsBatch(
+            device=device,
             dt=float(dyn0.dt),
             mass=float(dyn0.mass),
-            J=torch.as_tensor(dyn0.J, device=self.device, dtype=self.dtype),
+            J=J,
             batch=self.num_envs,
-            device=self.device,
-            dtype=self.dtype,
         )
 
         # ---- (optional) torch.compile DynamicsBatch.update() ----
         # Important: compile ONCE; then every step() reuses the compiled graph.
-        #try:
+        # try:
         #    self.dyn.enable_compile(mode="reduce-overhead")
-        #except Exception as e:
+        # except Exception as e:
         #    # compile can fail on some setups; fall back to eager
         #    print(f"[WARN] torch.compile on DynamicsBatch disabled: {e}")
 
@@ -157,7 +158,7 @@ class TorchQuadrotorVecEnv(VecEnv):
 
             self.dyn.M = M
             self.dyn.f = f
-            self.dyn.update(orthonormalize_R=True)
+            self.dyn.update()
 
             # advance time
             self._idx = self._idx + 1
@@ -441,9 +442,9 @@ def main():
 
     # ---- (optional) torch.compile policy network ----
     # This can speed up forward passes, but may break on some PyTorch/SB3 combos.
-    #try:
+    # try:
     #    model.policy = torch.compile(model.policy, mode="reduce-overhead")
-    #except Exception as e:
+    # except Exception as e:
     #    print(f"[WARN] torch.compile on policy disabled: {e}")
 
     model.learn(total_timesteps=args.total_steps,
