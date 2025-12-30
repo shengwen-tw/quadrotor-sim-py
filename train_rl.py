@@ -79,12 +79,13 @@ class TorchQuadrotorVecEnv(VecEnv):
 
         # ---- DynamicsBatch on GPU ----
         dyn0 = template.env.uav_dynamics
-        J_base = torch.as_tensor(dyn0.J, device=self.device, dtype=self.dtype)
+        J_base = torch.as_tensor(
+            dyn0.get_inertia_matrix(), device=self.device, dtype=self.dtype)
         J = J_base.clone().expand(self.num_envs, 3, 3).contiguous()
         self.dyn = DynamicsBatch(
             device=device,
-            dt=float(dyn0.dt),
-            mass=float(dyn0.mass),
+            dt=float(dyn0.get_time_step()),
+            mass=float(dyn0.get_mass()),
             J=J,
             batch=self.num_envs,
         )

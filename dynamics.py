@@ -110,6 +110,9 @@ class DynamicsBatch:
     def get_moment(self) -> Tensor:
         return self.M
 
+    #=========#
+    # Helpers #
+    #=========#
     def dv_dt(self, f: Tensor) -> Tensor:
         return (self.mass * self.g * self.e3 - f) / self.mass
 
@@ -179,6 +182,9 @@ class DynamicsBatch:
         R_out[:, 2, :] = z_normal
         return R_out
 
+    #=================#
+    # Dynamics update #
+    #=================#
     def update(self):
         """
         Update the quadrotor's state for one time step.
@@ -212,46 +218,130 @@ class DynamicsBatch:
         self.W = self.integrator_rk4(self.W, self.dW_dt)
 
         # 6. Update rotation matrix
-        #dR = torch.matrix_exp(self.hat_map_3x3(self.W * self.dt))
+        # dR = torch.matrix_exp(self.hat_map_3x3(self.W * self.dt))
         dR = self.hat_map_3x3(self.W * self.dt) + self.I
         self.R = self.R @ dR
         self.R = self.rotmat_orthonormalize(self.R)
 
 
 class Dynamics:
-    def __init__(self, dt, mass, J=np.eye(3)):
-        self._dyn = DynamicsBatch(
-            device='cpu',
-            dt=dt,
-            mass=mass,
-            J=torch.as_tensor(J, dtype=torch.float32),
-            batch=1
-        )
-        self.dt = dt
-        self.mass = mass
-        self.g = 9.8
-        self.J = J.copy()
-        self.x = np.zeros(3)
-        self.v = np.zeros(3)
-        self.a = np.zeros(3)
-        self.W = np.zeros(3)
-        self.W_dot = np.zeros(3)
-        self.R = np.eye(3)
-        self.f = np.zeros(3)
-        self.M = np.zeros(3)
-        self._update_internal()
+    '''
+    Numpy wrapper of the DynamicsBatch object for signle rigidbody simulation.
+    '''
 
-    def _update_internal(self):
-        self._dyn.set_position(torch.from_numpy(
-            self.x).to(self._dyn.device, self._dyn.dtype))
-        self._dyn.set_velocity(torch.from_numpy(
-            self.v).to(self._dyn.device, self._dyn.dtype))
-        self._dyn.set_rotmat(torch.from_numpy(self.R).to(
-            self._dyn.device, self._dyn.dtype))
-        self._dyn.set_force(torch.from_numpy(self.f).to(
-            self._dyn.device, self._dyn.dtype))
-        self._dyn.set_moment(torch.from_numpy(self.M).to(
-            self._dyn.device, self._dyn.dtype))
+    def __init__(self, dt, mass, J=np.eye(3), device="cpu"):
+        # Convert inertia matrix from numpy to tensor type
+        J_tensor = torch.as_tensor(
+            J, dtype=torch.float32, device=device).view(1, 3, 3)
+
+        # Create DynamicsBatch object
+        self._dynamics = DynamicsBatch(
+            device=device, dt=dt, mass=mass, J=J_tensor, batch=1)
+
+    #=========#
+    # Helpers #
+    #=========#
+    def _vec3x1_to_tensor(self, vec: np.ndarray) -> torch.Tensor:
+        return torch.as_tensor(vec, dtype=self._dynamics.dtype, device=self._dynamics.device).view(1, 3)
+
+    def _mat3x3_to_tensor(self, mat: np.ndarray) -> torch.Tensor:
+        return torch.as_tensor(mat, dtype=self._dynamics.dtype, device=self._dynamics.device).view(1, 3, 3)
+
+    def _tensor_to_ndarray(self, T: torch.Tensor) -> np.ndarray:
+        return T[0].cpu().numpy().copy()
+
+    #=========#
+    # Setters #
+    #=========#
+    def set_time_step(self, dt: float):
+        self._dynamics.set_time_step(dt)
+
+    def set_mass(self, mass: float):
+        self._dynamics.set_mass(mass)
+
+    def set_inertia_matrix(self, J: np.ndarray):
+        J_tensor = self._mat3x3_to_tensor(J)
+        self._dynamics.set_inertia_matrix(J_tensor)
+
+    def set_position(self, x: np.ndarray):
+        x_tensor = self._vec3x1_to_tensor(x)
+        self._dynamics.set_position(x_tensor)
+
+    def set_velocity(self, v: np.ndarray):
+        v_tensor = self._vec3x1_to_tensor(v)
+        self._dynamics.set_velocity(v_tensor)
+
+    def set_acceleration(self, a: np.ndarray):
+        a_tensor = self._vec3x1_to_tensor(a)
+        self._dynamics.set_acceleration(a_tensor)
+
+    def set_rotmat(self, R: np.ndarray):
+        R_tensor = self._mat3x3_to_tensor(R)
+        self._dynamics.set_rotmat(R_tensor)
+
+    def set_angular_velocity(self, W: np.ndarray):
+        W_tensor = self._vec3x1_to_tensor(W)
+        self._dynamics.set_angular_velocity(W_tensor)
+
+    def set_angular_acceleration(self, W_dot: np.ndarray):
+        W_dot_tensor = self._vec3x1_to_tensor(W_dot)
+        self._dynamics.set_angular_acceleration(W_dot_tensor)
+
+    def set_force(self, f: np.ndarray):
+        f_tensor = self._vec3x1_to_tensor(f)
+        self._dynamics.set_force(f_tensor)
+
+    def set_moment(self, M: np.ndarray):
+        M_tensor = self._vec3x1_to_tensor(M)
+        self._dynamics.set_moment(M_tensor)
+
+    #=========#
+    # Getters #
+    #=========#
+    def get_time_step(self) -> float:
+        return self._dynamics.get_time_step()
+
+    def get_mass(self) -> float:
+        return self._dynamics.get_mass()
+
+    def get_gravitational_acceleration(self) -> float:
+        return self._dynamics.get_gravitational_acceleration()
+
+    def get_inertia_matrix(self) -> np.ndarray:
+        J_tensor = self._dynamics.get_inertia_matrix()
+        return self._tensor_to_ndarray(J_tensor)
+
+    def get_position(self) -> np.ndarray:
+        x_tensor = self._dynamics.get_position()
+        return self._tensor_to_ndarray(x_tensor)
+
+    def get_velocity(self) -> np.ndarray:
+        v_tensor = self._dynamics.get_velocity()
+        return self._tensor_to_ndarray(v_tensor)
+
+    def get_acceleration(self) -> np.ndarray:
+        a_tensor = self._dynamics.get_acceleration()
+        return self._tensor_to_ndarray(a_tensor)
+
+    def get_rotmat(self) -> np.ndarray:
+        R_tensor = self._dynamics.get_rotmat()
+        return self._tensor_to_ndarray(R_tensor)
+
+    def get_angular_velocity(self) -> np.ndarray:
+        W_tensor = self._dynamics.get_angular_velocity()
+        return self._tensor_to_ndarray(W_tensor)
+
+    def get_angular_acceleration(self) -> np.ndarray:
+        W_dot_tensor = self._dynamics.get_angular_acceleration()
+        return self._tensor_to_ndarray(W_dot_tensor)
+
+    def get_force(self) -> np.ndarray:
+        f_tensor = self._dynamics.get_force()
+        return self._tensor_to_ndarray(f_tensor)
+
+    def get_moment(self) -> np.ndarray:
+        M_tensor = self._dynamics.get_moment()
+        return self._tensor_to_ndarray(M_tensor)
 
     def state_randomize(self, np_random=None):
         POS_INC_MAX = 1.5
@@ -260,87 +350,21 @@ class Dynamics:
 
         rng = np_random if np_random is not None else np.random
 
-        self.x += rng.uniform(-POS_INC_MAX, POS_INC_MAX, size=3)
-        # self.v += rng.uniform(-VEL_INC_MAX, VEL_INC_MAX, size=3)
-        # self.W += np.deg2rad(rng.uniform(-ANG_VEL_INC_MAX, ANG_VEL_INC_MAX, size=3))
-        # roll = np.deg2rad(rng.uniform(-70, 70))
-        # pitch = np.deg2rad(rng.uniform(-70, 70))
-        # yaw = np.deg2rad(rng.uniform(-180, 180))
-        # self.R = SE3.euler_to_rotmat(roll, pitch, yaw)
+        # position
+        x = self.get_position()
+        x += rng.uniform(-POS_INC_MAX, POS_INC_MAX, size=3)
+        self.set_position(x)
 
-        self._update_internal()
+        # v = self.get_velocity()
+        # v += rng.uniform(-VEL_INC_MAX, VEL_INC_MAX, size=3)
+        # self.set_velocity(v)
 
-    def set_position(self, x):
-        self.x = x.copy()
-        self._dyn.set_position(torch.from_numpy(
-            self.x).to(self._dyn.device, self._dyn.dtype))
+        # W = self.get_angular_velocity()
+        # W += np.deg2rad(rng.uniform(-ANG_VEL_INC_MAX, ANG_VEL_INC_MAX, size=3))
+        # self.set_angular_velocity(W)
 
-    def set_velocity(self, v):
-        self.v = v.copy()
-        self._dyn.set_velocity(torch.from_numpy(
-            self.v).to(self._dyn.device, self._dyn.dtype))
-
-    def set_rotmat(self, R):
-        self.R = R.copy()
-        self._dyn.set_rotmat(torch.from_numpy(self.R).to(
-            self._dyn.device, self._dyn.dtype))
-
-    def set_force(self, f):
-        self.f = f.copy()
-        self._dyn.set_force(torch.from_numpy(self.f).to(
-            self._dyn.device, self._dyn.dtype))
-
-    def set_moment(self, M):
-        self.M = M.copy()
-        self._dyn.set_moment(torch.from_numpy(self.M).to(
-            self._dyn.device, self._dyn.dtype))
-
-    #=========#
-    # Getters #
-    #=========#
-    def get_time_step(self) -> float:
-        return self.dt
-
-    def get_mass(self) -> float:
-        return self.mass
-
-    def get_gravitational_acceleration(self) -> float:
-        return self.g
-
-    def get_inertia_matrix(self) -> np.ndarray:
-        return self.J.copy()
-
-    def get_position(self) -> np.ndarray:
-        return self.x.copy()
-
-    def get_velocity(self) -> np.ndarray:
-        return self.v.copy()
-
-    def get_acceleration(self) -> np.ndarray:
-        return self.a.copy()
-
-    def get_rotmat(self) -> np.ndarray:
-        return self.R.copy()
-
-    def get_angular_velocity(self) -> np.ndarray:
-        return self.W.copy()
-
-    def get_angular_acceleration(self) -> np.ndarray:
-        return self.W_dot.copy()
-
-    def get_force(self) -> np.ndarray:
-        return self.f.copy()
-
-    def get_moment(self) -> np.ndarray:
-        return self.M.copy()
-
+    #=================#
+    # Dynamics update #
+    #=================#
     def update(self):
-        self._dyn.update()
-        self.x = self._dyn.x[0].cpu().numpy().copy()
-        self.v = self._dyn.v[0].cpu().numpy().copy()
-        self.a = self._dyn.a[0].cpu().numpy().copy()
-        self.R = self._dyn.R[0].cpu().numpy().copy()
-        self.W = self._dyn.W[0].cpu().numpy().copy()
-        self.W_dot = self._dyn.W_dot[0].cpu().numpy().copy()
-        self.f = self._dyn.f[0].cpu().numpy().copy()
-        self.M = self._dyn.M[0].cpu().numpy().copy()
+        self._dynamics.update()
