@@ -20,10 +20,10 @@ class GeometricMomentController:
 
     def run(self, uav_dynamics: Dynamics, roll_d, pitch_d, yaw_d):
         # States and parameters
-        mass = uav_dynamics.mass
-        J = uav_dynamics.J
-        R = uav_dynamics.R
-        W = uav_dynamics.W
+        mass = uav_dynamics.get_mass()
+        J = uav_dynamics.get_inertia_matrix()
+        R = uav_dynamics.get_rotmat()
+        W = uav_dynamics.get_angular_velocity()
         Rt = R.T
 
         # Desired values (i.e., reference signals)
@@ -80,13 +80,13 @@ class GeometricTrackingController:
         [xd, vd, ad, yaw_d, Wd, W_dot_d] = env.get_desired_state()
 
        # States and parameters
-        mass = env.uav_dynamics.mass
-        J = env.uav_dynamics.J
-        g = env.uav_dynamics.g
-        x = env.uav_dynamics.x
-        v = env.uav_dynamics.v
-        R = env.uav_dynamics.R
-        W = env.uav_dynamics.W
+        mass = env.uav_dynamics.get_mass()
+        J = env.uav_dynamics.get_inertia_matrix()
+        g = env.uav_dynamics.get_gravitational_acceleration()
+        x = env.uav_dynamics.get_position()
+        v = env.uav_dynamics.get_velocity()
+        R = env.uav_dynamics.get_rotmat()
+        W = env.uav_dynamics.get_angular_velocity()
         Rt = R.T
 
         # Tracking errors

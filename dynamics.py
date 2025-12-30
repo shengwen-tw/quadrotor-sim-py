@@ -295,6 +295,45 @@ class Dynamics:
         self._dyn.set_moment(torch.from_numpy(self.M).to(
             self._dyn.device, self._dyn.dtype))
 
+    #=========#
+    # Getters #
+    #=========#
+    def get_time_step(self) -> float:
+        return self.dt
+
+    def get_mass(self) -> float:
+        return self.mass
+
+    def get_gravitational_acceleration(self) -> float:
+        return self.g
+
+    def get_inertia_matrix(self) -> np.ndarray:
+        return self.J.copy()
+
+    def get_position(self) -> np.ndarray:
+        return self.x.copy()
+
+    def get_velocity(self) -> np.ndarray:
+        return self.v.copy()
+
+    def get_acceleration(self) -> np.ndarray:
+        return self.a.copy()
+
+    def get_rotmat(self) -> np.ndarray:
+        return self.R.copy()
+
+    def get_angular_velocity(self) -> np.ndarray:
+        return self.W.copy()
+
+    def get_angular_acceleration(self) -> np.ndarray:
+        return self.W_dot.copy()
+
+    def get_force(self) -> np.ndarray:
+        return self.f.copy()
+
+    def get_moment(self) -> np.ndarray:
+        return self.M.copy()
+
     def update(self):
         self._dyn.update()
         self.x = self._dyn.x[0].cpu().numpy().copy()
