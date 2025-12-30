@@ -35,7 +35,7 @@ python ./main.py
 
 Train a RL model for quadrotor control:
 ```
-python train_rl.py --traj HOVERING --iterations 1000 --n-envs 16 --total-steps 1000000000000
+python train_rl.py --traj HOVERING --iterations 1000 --n-envs 64 --total-steps 1000000000000
 tensorboard --logdir runs/ppo_quadrotor
 ```
 
