@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 
+from se3_math import TensorSE3
 from torch import Tensor
 
 
@@ -158,34 +159,6 @@ class DynamicsBatch:
         S[:, 2, 1] = vx
         return S
 
-    def rotmat_orthonormalize(self, R: Tensor) -> Tensor:
-        """
-        Fast rotation-matrix orthonormalization (B, 3, 3).
-        Ref: "Direction Cosine Matrix IMU: Theory"
-        """
-        x = R[:, 0, :]
-        y = R[:, 1, :]
-        error = (x * y).sum(dim=1, keepdim=True)
-
-        # Orthogonalization
-        x_orth = x - 0.5 * error * y
-        y_orth = y - 0.5 * error * x
-        z_orth = torch.cross(x_orth, y_orth, dim=1)
-
-        # Normalization
-        x_dot = (x_orth * x_orth).sum(dim=1, keepdim=True)
-        y_dot = (y_orth * y_orth).sum(dim=1, keepdim=True)
-        z_dot = (z_orth * z_orth).sum(dim=1, keepdim=True)
-        x_normal = 0.5 * (3.0 - x_dot) * x_orth
-        y_normal = 0.5 * (3.0 - y_dot) * y_orth
-        z_normal = 0.5 * (3.0 - z_dot) * z_orth
-
-        R_out = R.new_empty(R.shape)
-        R_out[:, 0, :] = x_normal
-        R_out[:, 1, :] = y_normal
-        R_out[:, 2, :] = z_normal
-        return R_out
-
     #=================#
     # Dynamics update #
     #=================#
@@ -222,10 +195,10 @@ class DynamicsBatch:
         self.W = self.integrator_rk4(self.W, self.dW_dt)
 
         # 6. Update rotation matrix
-        # dR = torch.matrix_exp(self.hat_map_3x3(self.W * self.dt))
-        dR = self.hat_map_3x3(self.W * self.dt) + self.I
+        # dR = torch.matrix_exp(TensorSE3.hat_map_3x3(self.W * self.dt))
+        dR = TensorSE3.hat_map_3x3(self.W * self.dt) + self.I
         self.R = self.R @ dR
-        self.R = self.rotmat_orthonormalize(self.R)
+        self.R = TensorSE3.rotmat_orthonormalize(self.R)
 
 
 class Dynamics:

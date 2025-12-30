@@ -5,7 +5,7 @@ from dynamics import Dynamics
 from geometric_control import GeometricTrackingController
 from rl_control import RLController
 from quadrotor import QuadrotorEnv
-from se3_math import SE3
+from se3_math import NumpySE3
 
 
 def greeting(dynamics, iteration_times, trajectory_type, ctrl):
@@ -13,7 +13,7 @@ def greeting(dynamics, iteration_times, trajectory_type, ctrl):
     x = dynamics.get_position()
     v = dynamics.get_velocity()
     R = dynamics.get_rotmat()
-    rpy = np.rad2deg(SE3.rotmat_to_euler(R))
+    rpy = np.rad2deg(NumpySE3.rotmat_to_euler(R))
     W = np.rad2deg(dynamics.get_angular_velocity())
     print(
         f"Quadrotor simulation (iterations={iteration_times}, dt={dt:.4f}s)")

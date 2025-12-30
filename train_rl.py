@@ -1,4 +1,3 @@
-# train_rl.py
 import argparse
 import os
 import random
@@ -11,13 +10,13 @@ import torch
 from dynamics import DynamicsBatch
 from quadrotor import QuadrotorEnv
 
+from se3_math import TensorSE3
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv
 
 
-# ----------------------------- utils -----------------------------
 def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
@@ -29,17 +28,7 @@ def set_seed(seed: int):
     torch.backends.cudnn.benchmark = False
 
 
-# ----------------------------- GPU-first VecEnv (NO env list + sync) -----------------------------
 class TorchQuadrotorVecEnv(VecEnv):
-    """
-    SB3 VecEnv that keeps ALL dynamics/state/obs/reward/done/reset on GPU (torch),
-    and only converts outputs to numpy at the VecEnv boundary.
-
-    - NO env list
-    - NO per-env python sync
-    - yaw_d handled on-device via cached trajectory table (no yaw_list loop)
-    """
-
     def __init__(self, args, n_envs: int, training: bool, device: str | None = None):
         self.num_envs = int(n_envs)
         self.training = bool(training)
@@ -89,14 +78,6 @@ class TorchQuadrotorVecEnv(VecEnv):
             J=J,
             batch=self.num_envs,
         )
-
-        # ---- (optional) torch.compile DynamicsBatch.update() ----
-        # Important: compile ONCE; then every step() reuses the compiled graph.
-        # try:
-        #    self.dyn.enable_compile(mode="reduce-overhead")
-        # except Exception as e:
-        #    # compile can fail on some setups; fall back to eager
-        #    print(f"[WARN] torch.compile on DynamicsBatch disabled: {e}")
 
         # ---- Cache trajectory (shared across envs) on GPU ----
         self.iterations = int(template.env.iterations)
@@ -304,35 +285,6 @@ class TorchQuadrotorVecEnv(VecEnv):
         return reward, terminated, truncated, done
 
     # -------------------- RL action -> moment/force (GPU) --------------------
-    @staticmethod
-    def _vee_map_3x3(S: torch.Tensor) -> torch.Tensor:
-        return torch.stack([S[:, 2, 1], S[:, 0, 2], S[:, 1, 0]], dim=1)
-
-    @staticmethod
-    def _euler_to_rotmat(roll: torch.Tensor, pitch: torch.Tensor, yaw: torch.Tensor) -> torch.Tensor:
-        cr = torch.cos(roll)
-        sr = torch.sin(roll)
-        cp = torch.cos(pitch)
-        sp = torch.sin(pitch)
-        cy = torch.cos(yaw)
-        sy = torch.sin(yaw)
-
-        B = roll.shape[0]
-        R = torch.empty((B, 3, 3), device=roll.device, dtype=roll.dtype)
-
-        R[:, 0, 0] = cy * cp
-        R[:, 0, 1] = cy * sp * sr - sy * cr
-        R[:, 0, 2] = cy * sp * cr + sy * sr
-
-        R[:, 1, 0] = sy * cp
-        R[:, 1, 1] = sy * sp * sr + cy * cr
-        R[:, 1, 2] = sy * sp * cr - cy * sr
-
-        R[:, 2, 0] = -sp
-        R[:, 2, 1] = cp * sr
-        R[:, 2, 2] = cp * cr
-        return R
-
     @torch.no_grad()
     def _execute_rl_action_batch(self, act: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -364,11 +316,11 @@ class TorchQuadrotorVecEnv(VecEnv):
         kW = torch.tensor([2.0, 2.0, 2.0], device=self.device,
                           dtype=self.dtype).view(1, 3)
 
-        Rd = self._euler_to_rotmat(roll_cmd, pitch_cmd, yaw_d)  # (B,3,3)
+        Rd = TensorSE3.euler_to_rotmat(roll_cmd, pitch_cmd, yaw_d)  # (B,3,3)
         Rt = R.transpose(1, 2)
         Rdt = Rd.transpose(1, 2)
 
-        eR = 0.5 * self._vee_map_3x3(Rdt @ R - Rt @ Rd)  # (B,3)
+        eR = 0.5 * TensorSE3.vee_map_3x3(Rdt @ R - Rt @ Rd)  # (B,3)
         eW = W  # Wd=0
 
         JW = torch.einsum("bij,bj->bi", J, W)
@@ -440,13 +392,6 @@ def main():
         verbose=1,
         device="cpu",
     )
-
-    # ---- (optional) torch.compile policy network ----
-    # This can speed up forward passes, but may break on some PyTorch/SB3 combos.
-    # try:
-    #    model.policy = torch.compile(model.policy, mode="reduce-overhead")
-    # except Exception as e:
-    #    print(f"[WARN] torch.compile on policy disabled: {e}")
 
     model.learn(total_timesteps=args.total_steps,
                 callback=eval_callback, tb_log_name=args.tb)

@@ -7,7 +7,7 @@ from dynamics import Dynamics
 from geometric_control import GeometricMomentController
 from gymnasium import spaces
 from rigidbody_visualize import QuadRenderer
-from se3_math import SE3
+from se3_math import NumpySE3
 from trajectory_planner import TrajectoryPlanner
 
 
@@ -115,7 +115,7 @@ class QuadrotorEnv(gym.Env):
         roll = np.deg2rad(0)
         pitch = np.deg2rad(0)
         yaw = self.yaw_d[0]
-        R = SE3.euler_to_rotmat(roll, pitch, yaw)
+        R = NumpySE3.euler_to_rotmat(roll, pitch, yaw)
         self.uav_dynamics.set_rotmat(R)
 
         # Randomize initial states
@@ -161,7 +161,7 @@ class QuadrotorEnv(gym.Env):
         R = self.uav_dynamics.get_rotmat()
         ex = x - self.curr_xd
         ev = v - self.curr_vd
-        euler = SE3.rotmat_to_euler(R)
+        euler = NumpySE3.rotmat_to_euler(R)
         return np.concatenate([ex, ev, euler]).astype(np.float32)
 
     def check_terminated(self):
@@ -232,7 +232,7 @@ class QuadrotorEnv(gym.Env):
         self.vel_arr[:, self.idx] = self.uav_dynamics.get_velocity()
         self.pos_arr[:, self.idx] = self.uav_dynamics.get_position()
         self.R_arr[:, :, self.idx] = self.uav_dynamics.get_rotmat()
-        self.euler_arr[:, self.idx] = SE3.rotmat_to_euler(
+        self.euler_arr[:, self.idx] = NumpySE3.rotmat_to_euler(
             self.uav_dynamics.get_rotmat())
         self.W_dot_arr[:,
                        self.idx] = self.uav_dynamics.get_angular_acceleration()
