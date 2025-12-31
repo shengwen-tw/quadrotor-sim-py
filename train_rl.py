@@ -346,7 +346,6 @@ def main():
         args, n_envs=args.n_envs, training=True, device=args.env_device)
 
     # Build evalution environment
-    #eval_args = Namespace(**vars(args))
     eval_args = argparse.Namespace(
         dt=args.dt,
         iterations=args.iterations,
