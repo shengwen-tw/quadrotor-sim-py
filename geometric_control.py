@@ -4,7 +4,7 @@ import numpy as np
 
 from dynamics import Dynamics
 from rigidbody_visualize import QuadRenderer
-from se3_math import SE3
+from se3_math import NumpySE3
 from trajectory_planner import TrajectoryPlanner
 
 
@@ -20,26 +20,26 @@ class GeometricMomentController:
 
     def run(self, uav_dynamics: Dynamics, roll_d, pitch_d, yaw_d):
         # States and parameters
-        mass = uav_dynamics.mass
-        J = uav_dynamics.J
-        R = uav_dynamics.R
-        W = uav_dynamics.W
+        mass = uav_dynamics.get_mass()
+        J = uav_dynamics.get_inertia_matrix()
+        R = uav_dynamics.get_rotmat()
+        W = uav_dynamics.get_angular_velocity()
         Rt = R.T
 
         # Desired values (i.e., reference signals)
-        Rd = SE3.euler_to_rotmat(roll_d, pitch_d, yaw_d)
+        Rd = NumpySE3.euler_to_rotmat(roll_d, pitch_d, yaw_d)
         Wd = np.zeros(3)
         W_dot_d = np.zeros(3)
 
         # Attitude errors
         Rdt = Rd.T
         eR_prv = 0.5 * np.trace(np.eye(3) - Rdt @ R)
-        eR = 0.5 * SE3.vee_map_3x3(Rdt @ R - Rt @ Rd)
+        eR = 0.5 * NumpySE3.vee_map_3x3(Rdt @ R - Rt @ Rd)
         eW = W - Rt @ Rd @ Wd
 
         # Control moment (torque)
         WJW = np.cross(W, J @ W)
-        M_ff = WJW - J @ (SE3.hat_map_3x3(W) @ Rt @
+        M_ff = WJW - J @ (NumpySE3.hat_map_3x3(W) @ Rt @
                           Rd @ Wd - Rt @ Rd @ W_dot_d)
 
         uav_ctrl_M = -self.kR * eR - self.kW * eW + M_ff
@@ -80,13 +80,13 @@ class GeometricTrackingController:
         [xd, vd, ad, yaw_d, Wd, W_dot_d] = env.get_desired_state()
 
        # States and parameters
-        mass = env.uav_dynamics.mass
-        J = env.uav_dynamics.J
-        g = env.uav_dynamics.g
-        x = env.uav_dynamics.x
-        v = env.uav_dynamics.v
-        R = env.uav_dynamics.R
-        W = env.uav_dynamics.W
+        mass = env.uav_dynamics.get_mass()
+        J = env.uav_dynamics.get_inertia_matrix()
+        g = env.uav_dynamics.get_gravitational_acceleration()
+        x = env.uav_dynamics.get_position()
+        v = env.uav_dynamics.get_velocity()
+        R = env.uav_dynamics.get_rotmat()
+        W = env.uav_dynamics.get_angular_velocity()
         Rt = R.T
 
         # Tracking errors
@@ -111,12 +111,12 @@ class GeometricTrackingController:
         # Attitude errors
         Rdt = Rd.T
         eR_prv = 0.5 * np.trace(np.eye(3) - Rdt @ R)
-        eR = 0.5 * SE3.vee_map_3x3(Rdt @ R - Rt @ Rd)
+        eR = 0.5 * NumpySE3.vee_map_3x3(Rdt @ R - Rt @ Rd)
         eW = W - Rt @ Rd @ Wd
 
         # Control moment (torque)
         WJW = np.cross(W, J @ W)
-        M_ff = WJW - J @ (SE3.hat_map_3x3(W) @ Rt @
+        M_ff = WJW - J @ (NumpySE3.hat_map_3x3(W) @ Rt @
                           Rd @ Wd - Rt @ Rd @ W_dot_d)
 
         uav_ctrl_M = -self.kR * eR - self.kW * eW + M_ff

@@ -5,21 +5,25 @@ from dynamics import Dynamics
 from geometric_control import GeometricTrackingController
 from rl_control import RLController
 from quadrotor import QuadrotorEnv
-from se3_math import SE3
+from se3_math import NumpySE3
 
 
 def greeting(dynamics, iteration_times, trajectory_type, ctrl):
-    rpy = np.rad2deg(SE3.rotmat_to_euler(dynamics.R))
-    W = np.rad2deg(dynamics.W)
+    dt = dynamics.get_time_step()
+    x = dynamics.get_position()
+    v = dynamics.get_velocity()
+    R = dynamics.get_rotmat()
+    rpy = np.rad2deg(NumpySE3.rotmat_to_euler(R))
+    W = np.rad2deg(dynamics.get_angular_velocity())
     print(
-        f"Quadrotor simulation (iterations={iteration_times}, dt={dynamics.dt:.4f}s)")
+        f"Quadrotor simulation (iterations={iteration_times}, dt={dt:.4f}s)")
     print(f"Controller: {ctrl}")
     print(
         f"Trajectory type: {trajectory_type}")
     print(
-        f"Initial position: ({dynamics.x[0]:.2f}m, {dynamics.x[1]:.2f}m, {dynamics.x[2]:.2f}m)")
+        f"Initial position: ({x[0]:.2f}m, {x[1]:.2f}m, {x[2]:.2f}m)")
     print(
-        f"Initial velocity: ({dynamics.v[0]:.2f}m/s, {dynamics.v[1]:.2f}m/s, {dynamics.v[2]:.2f}m/s)")
+        f"Initial velocity: ({v[0]:.2f}m/s, {v[1]:.2f}m/s, {v[2]:.2f}m/s)")
     print(
         f"Initial attitude: (roll={rpy[0]:.2f}deg, pitch={rpy[1]:.2f}deg, yaw={rpy[2]:.2f}deg)")
     print(
@@ -54,6 +58,7 @@ def parse_args():
                         help='Path to a trained SB3 PPO model')
     parser.add_argument('--deterministic', action='store_true',
                         help='Use deterministic policy for evaluation')
+    parser.add_argument("--ppo-device", type=str, default="cpu")
 
     args = parser.parse_args()
     return args
