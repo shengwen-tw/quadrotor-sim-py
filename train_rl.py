@@ -63,7 +63,7 @@ class QuadrotorVecEnv(VecEnv):
         dt = _env.env.uav_dynamics.get_time_step()
         mass = _env.env.uav_dynamics.get_mass()
         _J = _env.env.uav_dynamics.get_inertia_matrix()
-        _J = torch.as_tensor(_J, device=self.device, dtype=self.dtype)
+        _J = self.to_tensor(_J, dtype=self.dtype)
         J = _J.clone().expand(self.num_envs, 3, 3).contiguous()
         self.dynamics = DynamicsBatch(
             device=self.device,
@@ -110,7 +110,7 @@ class QuadrotorVecEnv(VecEnv):
     # Helpers #
     #=========#
     def to_tensor(self, x, dtype=None):
-        return torch.as_tensor(x, device=self.device, dtype=self.dtype)
+        return torch.as_tensor(x, device=self.device, dtype=dtype)
 
     def new_0_tensor(self, *shape, dtype=None):
         return torch.zeros(*shape, device=self.device, dtype=dtype)
@@ -132,8 +132,7 @@ class QuadrotorVecEnv(VecEnv):
     def step_wait(self):
         with torch.no_grad():
             # Get control moment and force from action
-            actions = torch.as_tensor(
-                self.actions, device=self.device, dtype=self.dtype)
+            actions = self.to_tensor(self.actions, dtype=self.dtype)
             M, f = self.execute_rl_action(actions)
 
             # Update quadrotor dyanmics
@@ -230,11 +229,12 @@ class QuadrotorVecEnv(VecEnv):
             3, device=self.device, dtype=self.dtype)
 
         # Randomize states (TODO)
-        POS_INC_MAX = 1.5
-        noise = 2.0 * torch.rand((idx.numel(), 3), generator=self.rng,
-                                 device=self.device, dtype=self.dtype) - 1.0
-        self.dynamics.x[idx] = self.dynamics.x[idx] + \
-            noise * float(POS_INC_MAX)
+        if self.training:
+            POS_INC_MAX = 1.5
+            noise = 2.0 * torch.rand((idx.numel(), 3), generator=self.rng,
+                                     device=self.device, dtype=self.dtype) - 1.0
+            self.dynamics.x[idx] = self.dynamics.x[idx] + \
+                noise * float(POS_INC_MAX)
 
         # Refresh desired state
         self.update_desired_state()
@@ -350,7 +350,7 @@ def main():
         dt=args.dt,
         iterations=args.iterations,
         traj=args.traj,
-        random_start=True,
+        random_start=False,
         seed=args.seed + 10,
         n_envs=1,
         logdir=args.logdir

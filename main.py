@@ -58,6 +58,7 @@ def parse_args():
                         help='Path to a trained SB3 PPO model')
     parser.add_argument('--deterministic', action='store_true',
                         help='Use deterministic policy for evaluation')
+    parser.add_argument("--ppo-device", type=str, default="cpu")
 
     args = parser.parse_args()
     return args

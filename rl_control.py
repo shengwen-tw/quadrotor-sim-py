@@ -8,7 +8,7 @@ class RLController:
     def __init__(self, args):
         print(f"[INFO] Loading RL model from: {args.model_path}")
         self.args = args
-        self.model = PPO.load(args.model_path, device='auto')
+        self.model = PPO.load(args.model_path, device=args.ppo_device)
 
     def reset(self):
         pass
