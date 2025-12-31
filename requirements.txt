@@ -1,6 +1,5 @@
 gymnasium
 matplotlib
 numpy
-scipy
 stable_baselines3
 torch
