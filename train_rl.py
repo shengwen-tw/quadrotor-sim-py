@@ -1,15 +1,13 @@
 import argparse
-import os
-import random
-from argparse import Namespace
-
 import gymnasium as gym
 import numpy as np
+import os
+import random
 import torch
 
+from argparse import Namespace
 from dynamics import DynamicsBatch
 from quadrotor import QuadrotorEnv
-
 from se3_math import TensorSE3
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import EvalCallback
@@ -17,12 +15,12 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv
 
 
-def set_seed(seed: int):
+def set_global_seeds(seed: int):
+    os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
     # deterministic-ish (you can loosen these for speed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
@@ -330,7 +328,6 @@ class TorchQuadrotorVecEnv(VecEnv):
         return uav_ctrl_M, uav_ctrl_f
 
 
-# ----------------------------- training script -----------------------------
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dt", type=float, default=0.002)
@@ -354,14 +351,13 @@ def parse_args():
 def main():
     args = parse_args()
     os.makedirs(args.logdir, exist_ok=True)
+    set_global_seeds(args.seed)
 
-    set_seed(args.seed)
-
-    # ---- GPU dynamics VecEnv (no env list + sync) ----
+    # Build training environment
     train_env = TorchQuadrotorVecEnv(
         args, n_envs=args.n_envs, training=True, device=args.env_device)
 
-    # eval uses 1 env
+    # Build evalution environment
     eval_args = Namespace(**vars(args))
     eval_env = TorchQuadrotorVecEnv(
         eval_args, n_envs=1, training=False, device=args.env_device)
@@ -375,6 +371,7 @@ def main():
         render=False,
     )
 
+    # Train MPL with PPO
     model = PPO(
         policy="MlpPolicy",
         env=train_env,
@@ -393,9 +390,12 @@ def main():
         device="cpu",
     )
 
+    # Start training
     model.learn(total_timesteps=args.total_steps,
-                callback=eval_callback, tb_log_name=args.tb)
+                callback=eval_callback,
+                tb_log_name=args.tb)
 
+    # Save final model
     final_path = os.path.join(args.logdir, "final_model")
     model.save(final_path)
     print(f"[OK] Saved model to: {final_path}")
