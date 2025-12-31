@@ -103,13 +103,8 @@ class QuadrotorEnv(gym.Env):
             self.np_random, _ = gym.utils.seeding.np_random(seed)
 
         # Set initial position and velocity
-        if self.args.ctrl == 'RL':
-            # TODO: Adjust this later
-            self.uav_dynamics.set_position(np.zeros(3))
-            self.uav_dynamics.set_velocity(np.zeros(3))
-        else:
-            self.uav_dynamics.set_position(self.xd[:, 0])
-            self.uav_dynamics.set_velocity(self.vd[:, 0])
+        self.uav_dynamics.set_position(self.xd[:, 0])
+        self.uav_dynamics.set_velocity(self.vd[:, 0])
 
         # Set initial orientation (from Euler angles)
         roll = np.deg2rad(0)
