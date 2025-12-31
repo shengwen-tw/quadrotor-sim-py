@@ -26,19 +26,17 @@ def set_global_seeds(seed: int):
     torch.backends.cudnn.benchmark = False
 
 
-class TorchQuadrotorVecEnv(VecEnv):
-    def __init__(self, args, n_envs: int, training: bool, device: str | None = None):
-        self.num_envs = int(n_envs)
-        self.training = bool(training)
+class QuadrotorVecEnv(VecEnv):
+    def __init__(self, args, n_envs: int, training: bool, device: str):
+        self.num_envs = n_envs
+        self.training = training
 
-        # ---- build ONE template env on CPU just to get spaces + trajectory arrays ----
-        # We will NOT step this env during training.
         env_args = Namespace(
             dt=args.dt,
             iterations=args.iterations,
             traj=args.traj,
             plan_yaw_traj="no",
-            random_start="yes" if (training and args.random_start) else "no",
+            random_start="yes" if training else "no",
             renderer="offline",  # IMPORTANT: don't create online renderer in training
             animate="no",
             plot="no",
@@ -59,8 +57,6 @@ class TorchQuadrotorVecEnv(VecEnv):
         )
 
         # ---- device / dtype ----
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
         self.dtype = torch.float32
 
@@ -196,8 +192,7 @@ class TorchQuadrotorVecEnv(VecEnv):
             setattr(self, attr_name, value)
 
     def env_method(self, method_name, *args, indices=None, **kwargs):
-        raise NotImplementedError(
-            "env_method is not supported in TorchQuadrotorVecEnv.")
+        raise NotImplementedError
 
     def env_is_wrapped(self, wrapper_class, indices=None):
         return [False] * self.num_envs
@@ -249,21 +244,12 @@ class TorchQuadrotorVecEnv(VecEnv):
         self._curr_vd = self._vd[:, idx].transpose(0, 1).contiguous()
         self._curr_yaw_d = self._yaw_d[idx].contiguous()
 
-    @staticmethod
-    def _rotmat_to_euler_zyx(R: torch.Tensor) -> torch.Tensor:
-        # returns (B,3) = roll, pitch, yaw
-        r20 = R[:, 2, 0]
-        pitch = torch.asin(torch.clamp(-r20, -1.0, 1.0))
-        roll = torch.atan2(R[:, 2, 1], R[:, 2, 2])
-        yaw = torch.atan2(R[:, 1, 0], R[:, 0, 0])
-        return torch.stack([roll, pitch, yaw], dim=1)
-
     @torch.no_grad()
     def _compute_obs(self) -> torch.Tensor:
         # obs = [ex, ev, euler]  => (B,9)
         ex = self.dyn.x - self._curr_xd
         ev = self.dyn.v - self._curr_vd
-        euler = self._rotmat_to_euler_zyx(self.dyn.R)
+        euler = TensorSE3.rotmat_to_euler(self.dyn.R)
         obs = torch.cat([ex, ev, euler], dim=1).to(torch.float32)
         return obs
 
@@ -340,10 +326,8 @@ def parse_args():
     parser.add_argument("--logdir", type=str, default="runs/ppo_quadrotor")
     parser.add_argument("--checkpoint-every", type=int, default=200000)
     parser.add_argument("--tb", type=str, default="ppo_tb")
-    parser.add_argument("--env-device", type=str,
-                        default="cuda")  # cuda or cpu
-    parser.add_argument("--ppo-device", type=str,
-                        default="auto")  # auto/cpu/cuda
+    parser.add_argument("--env-device", type=str, default="cuda")
+    parser.add_argument("--ppo-device", type=str, default="cpu")
     args = parser.parse_args()
     return args
 
@@ -354,12 +338,12 @@ def main():
     set_global_seeds(args.seed)
 
     # Build training environment
-    train_env = TorchQuadrotorVecEnv(
+    train_env = QuadrotorVecEnv(
         args, n_envs=args.n_envs, training=True, device=args.env_device)
 
     # Build evalution environment
     eval_args = Namespace(**vars(args))
-    eval_env = TorchQuadrotorVecEnv(
+    eval_env = QuadrotorVecEnv(
         eval_args, n_envs=1, training=False, device=args.env_device)
 
     eval_callback = EvalCallback(
@@ -387,7 +371,7 @@ def main():
         tensorboard_log=args.logdir,
         seed=args.seed,
         verbose=1,
-        device="cpu",
+        device=args.ppo_device,
     )
 
     # Start training
