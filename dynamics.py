@@ -143,22 +143,6 @@ class DynamicsBatch:
         k4 = f_dot_func(f_now + self.dt * k3)
         return f_now + (self.dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
 
-    def hat_map_3x3(self, vec: Tensor) -> Tensor:
-        """
-        Create skew-symmetric matrix (hat map) for cross product.
-        """
-        vx = vec[:, 0]
-        vy = vec[:, 1]
-        vz = vec[:, 2]
-        S = vec.new_zeros((vec.shape[0], 3, 3))
-        S[:, 0, 1] = -vz
-        S[:, 0, 2] = vy
-        S[:, 1, 0] = vz
-        S[:, 1, 2] = -vx
-        S[:, 2, 0] = -vy
-        S[:, 2, 1] = vx
-        return S
-
     #=================#
     # Dynamics update #
     #=================#
