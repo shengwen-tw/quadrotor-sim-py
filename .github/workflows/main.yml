@@ -19,4 +19,6 @@ jobs:
     - name: install dependencies
       run: pip install -r requirements.txt
     - name: run
-      run: python ./main.py --iterations=5 --plot=no --animate=no
+      run: |
+           python ./main.py --ctrl=GEOMETRIC_CTRL --iterations=5 --plot=no --animate=no
+           python ./main.py --ctrl=LQR --iterations=5 --plot=no --animate=no
