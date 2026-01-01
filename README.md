@@ -17,38 +17,44 @@ A minimal quadrotor flight simulator written in Python, designed for academic re
 4. **Flight trajectory visualization**  
    Animated 3D visualization of quadrotor motion alongside the desired trajectory.
 
-## Run the simulator
+## Installation
 
-Before running the simulator, install the required packages:
-
-```bash
+```shell
 pip install -r requirements.txt
 ```
 
-Then run the simulation:
+## Usage
+
+### Geometric Tracking Controller
 
 ```bash
-python ./main.py
+python ./main.py --ctrl=GEOMETRIC_CTRL
 ```
 
-## Reinforecement Learning (Experimental)
+### Linear Quadratic Regulator (LQR)
 
-Train a RL model for quadrotor control:
+```bash
+python ./main.py --ctrl=LQR
+```
+
+### Reinforcement Learning (Experimental)
+
+Train an RL policy:
 ```
 python train_rl.py --traj HOVERING --iterations 1000 --n-envs 64 --total-steps 1000000000000
 tensorboard --logdir runs/ppo_quadrotor
 ```
 
-Download the pre-trained RL model:
+Download a pre-trained policy:
 ```
 mkdir -p runs/ppo_quadrotor/best
 cd runs/ppo_quadrotor/best
 wget https://github.com/shengwen-tw/quadrotor-sim-py/raw/refs/heads/blob/runs/ppo_quadrotor/best/best_model.zip
 ```
 
-Run the simulator with the RL controller:
+Run with the RL controller:
 ```
-python main.py --ctrl=RL --plan_yaw_traj=no
+python ./main.py --ctrl=RL --plan_yaw_traj=no
 ```
 
 ## Project Structure
