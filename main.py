@@ -70,7 +70,7 @@ def main(args):
     controller = None
     if args.ctrl == 'GEOMETRIC_CTRL':
         controller = GeometricTrackingController(args)
-    if args.ctrl == 'LQR':
+    elif args.ctrl == 'LQR':
         controller = LQRController(args)
     elif args.ctrl == 'RL':
         controller = RLController(args)
