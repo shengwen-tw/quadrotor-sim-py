@@ -1,9 +1,9 @@
 import argparse
-import care_sda
 import time
 import matplotlib.pyplot as plt
 import numpy as np
 
+from care_sda import care_sda
 from se3_math import NumpySE3
 
 
@@ -211,7 +211,8 @@ class LQRController:
 
     def solve_care(self, A, B, H, R):
         t0 = time.perf_counter()
-        X = care_sda.care_sda(A, B, H, R)
+        G = B @ np.linalg.inv(R) @ B.T  # TODO
+        X = care_sda(A, H, G)
         t1 = time.perf_counter()
         elapsed_time = t1 - t0
         return X, elapsed_time
@@ -324,25 +325,6 @@ class LQRController:
         plt.grid(True)
         plt.xlabel("time [s]")
         plt.ylabel("f")
-
-        # Plot Euler angles
-        plt.figure("Attitude (Euler)")
-        plt.subplot(3, 1, 1)
-        plt.plot(t, self.euler_arr[0, :])
-        plt.grid(True)
-        plt.title("Euler angles")
-        plt.xlabel("time [s]")
-        plt.ylabel("roll [deg]")
-        plt.subplot(3, 1, 2)
-        plt.plot(t, self.euler_arr[1, :])
-        plt.grid(True)
-        plt.xlabel("time [s]")
-        plt.ylabel("pitch [deg]")
-        plt.subplot(3, 1, 3)
-        plt.plot(t, self.euler_arr[2, :])
-        plt.grid(True)
-        plt.xlabel("time [s]")
-        plt.ylabel("yaw [deg]")
 
         # Plot angular rates
         plt.figure("Angular rates (body)")

@@ -1,14 +1,14 @@
 import numpy as np
 
 
-def care_sda(A: np.ndarray, B: np.ndarray, H: np.ndarray, R: np.ndarray,
-             r: float = 2.4, tol: float = 1e-9, max_iter: int = 10000) -> np.ndarray:
+def care_sda(A: np.ndarray, H: np.ndarray, G: np.ndarray,
+             r: float = 2.4, tol: float = 1e-9,
+             max_iter: int = 50, raise_on_fail: bool = True) -> np.ndarray:
     """
     Solve the continuous-time Algebraic Riccati Equation (CARE) via the
     Structure-Preserving Doubling Algorithm (SDA):
 
-        A.T @ X + X @ A - X @ G @ X + H = 0,
-        where G = B @ inv(R) @ B.T.
+        A.T @ X + X @ A - X @ G @ X + H = 0.
 
     Reference:
         "A structure-preserving doubling algorithm for continuous-time
@@ -21,7 +21,6 @@ def care_sda(A: np.ndarray, B: np.ndarray, H: np.ndarray, R: np.ndarray,
         return np.linalg.norm(M)
 
     I = np.eye(A.shape[0])
-    G = B @ inv(R) @ B.T
     At = A.T
     Ar = A - r * I
 
@@ -53,4 +52,7 @@ def care_sda(A: np.ndarray, B: np.ndarray, H: np.ndarray, R: np.ndarray,
         if abs(norm_H_now - norm_H_old) < tol:
             return H_new  # X = H_new
 
-    raise RuntimeError("SDA did not converge within max_iter.")
+    if raise_on_fail:
+        raise RuntimeError("SDA did not converge within max_iter.")
+
+    return None
