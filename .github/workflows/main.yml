@@ -22,3 +22,4 @@ jobs:
       run: |
            python ./main.py --ctrl=GEOMETRIC_CTRL --iterations=5 --plot=no --animate=no
            python ./main.py --ctrl=LQR --iterations=5 --plot=no --animate=no
+           python ./main.py --ctrl=HINFTY_CTRL --iterations=5 --plot=no --animate=no
