@@ -37,6 +37,12 @@ python ./main.py --ctrl=GEOMETRIC_CTRL
 python ./main.py --ctrl=LQR
 ```
 
+### H∞ Controller (H-infinity)
+
+```bash
+python ./main.py --ctrl=HINFTY_CTRL
+```
+
 ### Reinforcement Learning (Experimental)
 
 Train an RL policy:
