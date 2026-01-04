@@ -3,53 +3,39 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 
-from care_sda import care_sda
-from se3_math import NumpySE3
+from models.se3_math import NumpySE3
+from control.hinf_syn import hinf_syn
 
 
-class LQRController:
+class HinfController:
     def __init__(self, args):
         self.iterations = args.iterations
         self.dt = args.dt
 
-        # State error penalty weights
-        Q = np.zeros((10, 10))
-        Q[0, 0] = 5000.0   # Yaw
-        Q[1, 1] = 10.0     # Roll rate
-        Q[2, 2] = 10.0     # Pitch rate
-        Q[3, 3] = 100.0    # Yaw rate
-        Q[4, 4] = 2000.0   # vx (body-fixed frame)
-        Q[5, 5] = 2000.0   # vy (body-fixed frame)
-        Q[6, 6] = 3000.0   # vz (body-fixed frame)
-        Q[7, 7] = 10000.0  # x (inertial frame)
-        Q[8, 8] = 10000.0  # y (inertial frame)
-        Q[9, 9] = 10000.0  # z (inertial frame)
-        self.Q = Q
+        # Lower bound γ for the H∞ synthesis.
+        # Use 0 to let `hinf_syn` estimate the theoretical lower bound, then set a
+        # practical value (typically slightly larger) for a numerically robust
+        # suboptimal solution.
+        self.gamma_lb = 30
 
-        # Control weights
-        R = np.zeros((4, 4))
-        R[0, 0] = 1.0  # Thrust
-        R[1, 1] = 1.0  # Mx
-        R[2, 2] = 1.0  # My
-        R[3, 3] = 1.0  # Mz
-        self.R = R
+        # Disturbance matrix
+        self.B1 = None
 
         # Control matrix
-        self.B = None  # Build later when mass and inertia matrix is known
+        self.B2 = None
 
-        # Observation matrix
-        C = np.zeros((10, 12))
-        C[0,  2] = 1.0  # Yaw
-        C[1,  3] = 1.0  # Roll rate
-        C[2,  4] = 1.0  # Pitch rate
-        C[3,  5] = 1.0  # Yaw rate
-        C[4,  6] = 1.0  # vx (body-fixed frame)
-        C[5,  7] = 1.0  # vy (body-fixed frame)
-        C[6,  8] = 1.0  # vz (body-fixed frame)
-        C[7,  9] = 1.0  # x (inertial frame)
-        C[8, 10] = 1.0  # y (inertial frame)
-        C[9, 11] = 1.0  # z (inertial frame)
-        self.C = C
+        # Output weighting matrix (C1)
+        self.C1 = np.zeros((14, 12))
+        self.C1[0, 2] = 125   # Waw
+        self.C1[1, 3] = 10    # Roll rate
+        self.C1[2, 4] = 10    # Pitch rate
+        self.C1[3, 5] = 25    # Yaw rate
+        self.C1[4, 6] = 50    # vx (body-fixed frame)
+        self.C1[5, 7] = 50    # vy (body-fixed frame)
+        self.C1[6, 8] = 100   # vz (body-fixed frame)
+        self.C1[7, 9] = 200   # x (inertial frame)
+        self.C1[8, 10] = 200  # y (inertial frame)
+        self.C1[9, 11] = 160  # z (inertial frame)
 
         # Z-vector of the inertial frame
         self.e3 = np.array([0.0, 0.0, 1.0])
@@ -69,8 +55,28 @@ class LQRController:
         self.ev_arr = np.zeros((3, self.iterations))
         self.M_arr = np.zeros((3, self.iterations))
         self.f_arr = np.zeros(self.iterations)
-        self.sda_time_arr = np.zeros(self.iterations)
-        self.care_residual_arr = np.zeros(self.iterations)
+        self.hinf_time_arr = np.zeros(self.iterations)
+        self.ric_residual_arr = np.zeros(self.iterations)
+        self.gamma_arr = np.zeros(self.iterations)
+        self.gamma_lb_arr = np.zeros(self.iterations)
+
+    def build_disturbance_matrix(self, mass, J):
+        B1 = np.zeros((12, 6))
+        B1[3, 3] = 1.0 / J[0, 0]
+        B1[4, 4] = 1.0 / J[1, 1]
+        B1[5, 5] = 1.0 / J[2, 2]
+        B1[6, 0] = 1.0 / mass
+        B1[7, 1] = 1.0 / mass
+        B1[8, 2] = 1.0 / mass
+        return B1
+
+    def build_control_matrix(self, mass, J):
+        B2 = np.zeros((12, 4))
+        B2[3, 1] = 1.0 / J[0, 0]
+        B2[4, 2] = 1.0 / J[1, 1]
+        B2[5, 3] = 1.0 / J[2, 2]
+        B2[8, 0] = -1.0 / mass
+        return B2
 
     def compute_state_transition_matrix(self, J, g, eulers, W, v_b):
         p = W[0]
@@ -99,7 +105,7 @@ class LQRController:
 
         # A[0, :]
         A[0, 0] = -r*s_phi*t_theta + q*c_phi*t_theta
-        A[0, 1] = r*(c_phi*sec_theta**2) + q*(s_phi*sec_theta**2)
+        A[0, 1] = r*(c_phi*(sec_theta**2) + q*s_phi*(sec_theta**2))
         A[0, 3] = 1
         A[0, 4] = s_phi*t_theta
         A[0, 5] = c_phi*t_theta
@@ -128,7 +134,7 @@ class LQRController:
         A[5, 4] = (Jx - Jy) / Jz * p
 
         # A[6, :]
-        A[6, 1] = -g*c_theta
+        A[6, 1] = -g * c_theta
         A[6, 4] = -w
         A[6, 5] = v
         A[6, 7] = r
@@ -169,7 +175,7 @@ class LQRController:
         A[9, 7] = -c_phi*s_psi + c_psi*s_phi*s_theta
         A[9, 8] = s_phi*s_psi + c_phi*c_psi*s_theta
 
-        # A[10,:]
+        # A[10, :]
         A[10, 0] = (
             v*(-s_phi*c_psi + c_phi*s_psi*s_theta) -
             w*(c_psi*c_phi + s_phi*s_psi*s_theta)
@@ -197,26 +203,6 @@ class LQRController:
 
         return A
 
-    def compute_control_matrix(self, m, J):
-        if self.B is not None:
-            return self.B
-
-        self.B = np.zeros((12, 4))
-        self.B[3, 1] = 1.0 / J[0, 0]
-        self.B[4, 2] = 1.0 / J[1, 1]
-        self.B[5, 3] = 1.0 / J[2, 2]
-        self.B[8, 0] = -1.0 / m
-
-        return self.B
-
-    def solve_care(self, A, B, H, R):
-        t0 = time.perf_counter()
-        G = B @ np.linalg.inv(R) @ B.T  # TODO
-        X = care_sda(A, H, G)
-        t1 = time.perf_counter()
-        elapsed_time = t1 - t0
-        return X, elapsed_time
-
     def run(self, env):
         # Desired values (i.e., reference signals)
         [xd, vd, ad, yaw_d, Wd, W_dot_d] = env.get_desired_state()
@@ -235,19 +221,21 @@ class LQRController:
 
         # System linearization
         A = self.compute_state_transition_matrix(J, g, eulers, W, v_b)
-        B = self.compute_control_matrix(mass, J)
-        C = self.C
+        if self.B1 is None:
+            self.B1 = self.build_disturbance_matrix(mass, J)
+        if self.B2 is None:
+            self.B2 = self.build_control_matrix(mass, J)
 
-        # Solve CARE for optimal feedback gain matrix K
-        H = C.T @ self.Q @ C
-        X, sda_time = self.solve_care(A, B, H, self.R)
-        K = np.linalg.inv(self.R) @ B.T @ X
+        # H-infinity synthesis
+        start_time = time.time()
+        gamma, gamma_lb, X, ric_residual = \
+            hinf_syn(A, self.B1, self.B2, self.C1, gamma_lb=self.gamma_lb)
+        hinf_time = time.time() - start_time
 
-        # Compute CARE residual norm
-        G = B @ np.linalg.inv(self.R) @ B.T
-        care_residual = np.linalg.norm(A.T @ X + X @ A - X @ G @ X + H)
+        # Compute optimal feedback gain matrix K
+        K = -self.B2.T @ X
 
-        # Construct state vector
+        # Construct current state vector
         x_state = np.zeros(12)
         x_state[0:3] = eulers
         x_state[3:6] = W
@@ -272,13 +260,13 @@ class LQRController:
         error[2] = ((error[2] + np.pi) % (2 * np.pi)) - np.pi
 
         # Compute feedback control
-        u_fb = -K @ error
+        u_fb = K @ error
 
         # Combine feedforward and feedback control
         u = u_ff + u_fb
 
         # Control force (3x1 vector in world frame)
-        uav_ctrl_f = u[0] * R @ self.e3
+        uav_ctrl_f = u[0] * (R @ self.e3)
 
         # Control moment (3x1 vector in body-fixed frame)
         uav_ctrl_M = u[1:4]
@@ -291,8 +279,10 @@ class LQRController:
         self.ev_arr[:, self.idx] = v - vd
         self.M_arr[:, self.idx] = uav_ctrl_M
         self.f_arr[self.idx] = u[0]
-        self.sda_time_arr[self.idx] = sda_time
-        self.care_residual_arr[self.idx] = care_residual
+        self.hinf_time_arr[self.idx] = hinf_time
+        self.ric_residual_arr[self.idx] = ric_residual
+        self.gamma_arr[self.idx] = gamma
+        self.gamma_lb_arr[self.idx] = gamma_lb
 
         # Update time index
         self.idx += 1
@@ -383,15 +373,25 @@ class LQRController:
         plt.xlabel("time [s]")
         plt.ylabel("z [m/s]")
 
-        # Plot CARE solver statistics
-        plt.figure("CARE statistics")
-        plt.subplot(2, 1, 1)
-        plt.plot(t, self.sda_time_arr)
+        # Plot H-infinity solver statistics
+        plt.figure("H-infinity statistics")
+        plt.subplot(4, 1, 1)
+        plt.plot(t, self.hinf_time_arr)
         plt.grid(True)
-        plt.title("SDA solve time per step")
+        plt.title("H-infinity synthesis time per step")
         plt.ylabel("time [s]")
-        plt.subplot(2, 1, 2)
-        plt.plot(t, self.care_residual_arr)
+        plt.subplot(4, 1, 2)
+        plt.plot(t, self.ric_residual_arr)
         plt.grid(True)
         plt.xlabel("time [s]")
-        plt.ylabel("||CARE residual||")
+        plt.ylabel("||Riccati residual||")
+        plt.subplot(4, 1, 3)
+        plt.plot(t, self.gamma_arr)
+        plt.grid(True)
+        plt.xlabel("time [s]")
+        plt.ylabel("gamma")
+        plt.subplot(4, 1, 4)
+        plt.plot(t, self.gamma_lb_arr)
+        plt.grid(True)
+        plt.xlabel("time [s]")
+        plt.ylabel("gamma_lb")

@@ -3,11 +3,11 @@ import gymnasium as gym
 import matplotlib.pyplot as plt
 import numpy as np
 
-from dynamics import Dynamics
-from geometric_control import GeometricMomentController
+from models.dynamics import Dynamics
+from models.se3_math import NumpySE3
+from control.geometric_control import GeometricMomentController
 from gymnasium import spaces
 from rigidbody_visualize import QuadRenderer
-from se3_math import NumpySE3
 from trajectory_planner import TrajectoryPlanner
 
 

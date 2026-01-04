@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from se3_math import TensorSE3
+from models.se3_math import TensorSE3
 from torch import Tensor
 
 

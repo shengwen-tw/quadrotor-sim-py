@@ -1,13 +1,13 @@
 import argparse
 import numpy as np
 
-from dynamics import Dynamics
-from geometric_control import GeometricTrackingController
-from hinfty_control import HinfController
-from lqr_control import LQRController
-from rl_control import RLController
-from quadrotor import QuadrotorEnv
-from se3_math import NumpySE3
+from models.dynamics import Dynamics
+from models.quadrotor import QuadrotorEnv
+from models.se3_math import NumpySE3
+from control.geometric_control import GeometricTrackingController
+from control.hinfty_control import HinfController
+from control.lqr_control import LQRController
+from control.rl_control import RLController
 
 
 def greeting(dynamics, iteration_times, trajectory_type, ctrl):

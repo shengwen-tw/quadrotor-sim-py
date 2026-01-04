@@ -1,6 +1,6 @@
 import argparse
 
-from quadrotor import QuadrotorEnv
+from models.quadrotor import QuadrotorEnv
 from stable_baselines3 import PPO
 
 

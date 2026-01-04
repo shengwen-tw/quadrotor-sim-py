@@ -6,9 +6,9 @@ import random
 import torch
 
 from argparse import Namespace
-from dynamics import DynamicsBatch
-from quadrotor import QuadrotorEnv
-from se3_math import TensorSE3
+from models.dynamics import DynamicsBatch
+from models.quadrotor import QuadrotorEnv
+from models.se3_math import TensorSE3
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor

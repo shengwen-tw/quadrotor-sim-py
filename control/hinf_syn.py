@@ -1,6 +1,6 @@
 import numpy as np
 
-from care_sda import care_sda
+from control.care_sda import care_sda
 
 
 def hinf_syn(A: np.ndarray, B1: np.ndarray, B2: np.ndarray, C1: np.ndarray,

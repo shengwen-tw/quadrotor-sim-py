@@ -2,9 +2,9 @@ import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 
-from dynamics import Dynamics
+from models.dynamics import Dynamics
+from models.se3_math import NumpySE3
 from rigidbody_visualize import QuadRenderer
-from se3_math import NumpySE3
 from trajectory_planner import TrajectoryPlanner
 
 
