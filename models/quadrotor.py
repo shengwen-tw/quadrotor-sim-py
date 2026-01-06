@@ -2,6 +2,7 @@ import argparse
 import gymnasium as gym
 import matplotlib.pyplot as plt
 import numpy as np
+import yaml
 
 from models.dynamics import Dynamics
 from models.se3_math import NumpySE3
@@ -14,7 +15,7 @@ from trajectory_planner import TrajectoryPlanner
 class QuadrotorEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, args,
+    def __init__(self, args, vehicle_path,
                  uav_dynamics=None, controller=None,
                  render_mode=None, rl_training: bool = False):
         super().__init__()
@@ -25,10 +26,15 @@ class QuadrotorEnv(gym.Env):
         self.render_mode = render_mode
         self.rl_training = rl_training
 
+        # Load vehicle parameters from config file
+        with open(vehicle_path) as f:
+            cfg = yaml.safe_load(f)
+        mass = float(cfg["mass"])
+        J = np.array(cfg["inertia"], dtype=np.float32)        
+
         # Initialize quadrotor dynamics
         if uav_dynamics == None:
-            self.uav_dynamics = Dynamics(
-                dt=self.dt, mass=1.0, J=np.diag([0.01466, 0.01466, 0.02848]))
+            self.uav_dynamics = Dynamics(dt=args.dt, mass=mass, J=J)
         else:
             self.uav_dynamics = uav_dynamics
 
