@@ -7,8 +7,8 @@ import yaml
 from models.dynamics import Dynamics
 from models.se3_math import NumpySE3
 from control.geometric_control import GeometricMomentController
+from viz.rigidbody_visualize import QuadRenderer
 from gymnasium import spaces
-from rigidbody_visualize import QuadRenderer
 from trajectory_planner import TrajectoryPlanner
 
 

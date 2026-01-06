@@ -4,7 +4,6 @@ import numpy as np
 
 from models.dynamics import Dynamics
 from models.se3_math import NumpySE3
-from rigidbody_visualize import QuadRenderer
 from trajectory_planner import TrajectoryPlanner
 
 
