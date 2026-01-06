@@ -35,8 +35,8 @@ def greeting(dynamics, iteration_times, trajectory_type, ctrl):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--vehicle_path', type=str,
-                        default='configs/vehicles/quadrotor_f450.yaml')
+    parser.add_argument('--vehicle_cfg', type=str,
+                        default='quadrotor_f450.yaml')
     parser.add_argument('--motion_cfg', type=str,
                         default='motion_normal.yaml')
     parser.add_argument('--dt', type=float, default=0.001,
@@ -85,8 +85,7 @@ def main(args):
         raise ValueError(f"Unknown controller: {args.ctrl}")
 
     # Initialize quadrotor environment
-    vehicle_path = args.vehicle_path
-    env = QuadrotorEnv(args, vehicle_path, controller=controller)
+    env = QuadrotorEnv(args, controller=controller)
 
     # Print environment
     greeting(env.uav_dynamics, args.iterations, args.traj, args.ctrl)

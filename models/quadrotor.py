@@ -15,7 +15,7 @@ from trajectory_planner import TrajectoryPlanner
 class QuadrotorEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, args, vehicle_path,
+    def __init__(self, args,
                  uav_dynamics=None, controller=None,
                  render_mode=None, rl_training: bool = False):
         super().__init__()
@@ -27,6 +27,7 @@ class QuadrotorEnv(gym.Env):
         self.rl_training = rl_training
 
         # Load vehicle parameters from config file
+        vehicle_path = 'configs/vehicles/' + args.vehicle_cfg
         with open(vehicle_path) as f:
             cfg = yaml.safe_load(f)
         mass = float(cfg["mass"])
