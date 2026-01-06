@@ -4,3 +4,4 @@ numpy
 PyYAML
 stable_baselines3
 torch
+tqdm

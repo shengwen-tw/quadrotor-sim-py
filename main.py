@@ -1,5 +1,6 @@
 import argparse
 import numpy as np
+from tqdm import trange
 
 from models.dynamics import Dynamics
 from models.quadrotor import QuadrotorEnv
@@ -92,7 +93,7 @@ def main(args):
 
     # Simulation loop
     obs, _ = env.reset()
-    for i in range(args.iterations):
+    for i in trange(args.iterations, desc="Simulation"):
         action = controller.run(env)
         obs, reward, terminated, truncated, info = env.step(action)
         env.render()
