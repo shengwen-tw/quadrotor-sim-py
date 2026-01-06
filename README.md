@@ -1,6 +1,6 @@
-# quadrotor-sim-py
+# RotorBench
 
-A minimal quadrotor flight simulator written in Python, designed for academic research and fast prototyping.
+A compact quadrotor flight simulator written in Python, designed for benchmarking, fast prototyping, and academic research.
 
 ## Features
 
