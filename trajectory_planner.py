@@ -1,4 +1,5 @@
 import numpy as np
+import yaml
 
 
 class TrajectoryPlanner:
@@ -12,23 +13,36 @@ class TrajectoryPlanner:
         self.vd = np.zeros((3, self.iterations))
         self.yaw_d = np.zeros(self.iterations)
 
+        # Load trajectory setting
+        cfg_file = None
+        if self.traj_type == "CIRCLE" or self.traj_type == "EIGHT":
+            cfg_file = args.motion_cfg
+        elif self.traj_type == "HOVERING":
+            cfg_file = 'hover.yaml'
+        cfg_full_path = 'configs/trajectory/' + cfg_file
+
+        with open(cfg_full_path) as f:
+            self.cfg = yaml.safe_load(f)["trajectory"]
+
     def plan(self):
         if self.plan_yaw_traj == "yes":
-            self.plan_yaw_trajectory(yaw_rate=0.05)
+            self.plan_yaw_trajectory(yaw_rate=self.cfg['yaw']['yaw_rate'])
 
         if self.traj_type == "CIRCLE":
             self.plan_circular_trajectory(
-                radius=3.0,
-                circum_rate=0.125,
+                radius=self.cfg['circle']['radius'],
+                circum_rate=self.cfg['circle']['circum_rate'],
             )
         elif self.traj_type == "EIGHT":
             self.plan_figure8_trajectory(
-                A=3.0, B=3.0,
-                a=0.1, b=0.2,  # 1:2 ratio
+                A=self.cfg['eight']['A'], B=self.cfg['eight']['B'],
+                a=self.cfg['eight']['a'], b=self.cfg['eight']['b'],
             )
         elif self.traj_type == "HOVERING":
             self.plan_hovering_trajectory(
-                position=np.array([1, 2, -3]),
+                position=np.array([self.cfg['hovering']['x'],
+                                   self.cfg['hovering']['y'],
+                                   self.cfg['hovering']['z']]),
             )
         else:
             raise ValueError(f"Unknown trajectory type: {self.traj_type}")

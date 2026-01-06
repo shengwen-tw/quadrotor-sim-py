@@ -37,6 +37,8 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--vehicle_path', type=str,
                         default='configs/vehicles/quadrotor_f450.yaml')
+    parser.add_argument('--motion_cfg', type=str,
+                        default='motion_normal.yaml')
     parser.add_argument('--dt', type=float, default=0.001,
                         help='Time period for simulation')
     parser.add_argument('--iterations', type=int,

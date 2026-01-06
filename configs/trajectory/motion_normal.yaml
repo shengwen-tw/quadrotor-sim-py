@@ -1,0 +1,13 @@
+trajectory:
+  circle:
+    radius: 3.0
+    circum_rate: 0.125
+
+  eight:
+    A: 3.0
+    B: 3.0
+    a: 0.1
+    b: 0.2
+
+  yaw:
+    yaw_rate: 0.05

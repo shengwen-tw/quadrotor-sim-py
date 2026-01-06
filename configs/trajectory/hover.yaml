@@ -1,0 +1,8 @@
+trajectory:
+  hovering:
+    x: 1.0
+    y: 2.0
+    z: -3.0
+
+  yaw:
+    yaw_rate: 0.05
