@@ -82,7 +82,7 @@ quadrotor-sim-py/
 
 ## Preview
 
-![](preview.png)
+![](assets/preview.png)
 
 ## License
 
