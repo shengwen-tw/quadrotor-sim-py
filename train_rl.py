@@ -36,6 +36,8 @@ class QuadrotorVecEnv(VecEnv):
 
         # Create first environment to initialize DynamicsBatch
         env_args = Namespace(
+            vehicle_cfg=args.vehicle_cfg,
+            motion_cfg=args.motion_cfg,
             dt=args.dt,
             iterations=args.iterations,
             traj=args.traj,
@@ -320,6 +322,10 @@ class QuadrotorVecEnv(VecEnv):
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--vehicle_cfg', type=str,
+                        default='quadrotor_f450.yaml')
+    parser.add_argument('--motion_cfg', type=str,
+                        default='motion_normal.yaml')
     parser.add_argument("--dt", type=float, default=0.002)
     parser.add_argument("--iterations", type=int, default=1000)
     parser.add_argument("--traj", type=str, default="HOVERING")
@@ -347,6 +353,8 @@ def main():
 
     # Build evalution environment
     eval_args = argparse.Namespace(
+        vehicle_cfg=args.vehicle_cfg,
+        motion_cfg=args.motion_cfg,
         dt=args.dt,
         iterations=args.iterations,
         traj=args.traj,
