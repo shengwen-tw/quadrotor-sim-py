@@ -154,17 +154,24 @@ class QuadrotorEnv(gym.Env):
         """Compute reward for reinforcement learning"""
         obs = self.get_observation()
         ex, ev = obs[0:3], obs[3:6]
-        return -float(np.linalg.norm(ex) + 0.25*np.linalg.norm(ev))
+        R = self.uav_dynamics.get_rotmat()
+        Rt = R.T
+        ex_b = Rt @ ex
+        ev_b = Rt @ ev
+        return -float(np.linalg.norm(ex_b) + 0.25*np.linalg.norm(ev_b))
 
     def get_observation(self):
         """Return observation for reinforcement learning"""
         x = self.uav_dynamics.get_position()
         v = self.uav_dynamics.get_velocity()
         R = self.uav_dynamics.get_rotmat()
+        Rt = R.T
         ex = x - self.curr_xd
         ev = v - self.curr_vd
+        ex_b = Rt @ ex
+        ev_b = Rt @ ev
         euler = NumpySE3.rotmat_to_euler(R)
-        return np.concatenate([ex, ev, euler]).astype(np.float32)
+        return np.concatenate([ex_b, ev_b, euler]).astype(np.float32)
 
     def check_terminated(self):
         """Check terminaion for reinforcement learning"""

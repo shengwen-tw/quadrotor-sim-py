@@ -60,7 +60,7 @@ wget https://github.com/shengwen-tw/quadrotor-sim-py/raw/refs/heads/blob/runs/pp
 
 Run with the RL controller:
 ```
-python ./main.py --ctrl=RL --plan_yaw_traj=no
+python ./main.py --ctrl=RL
 ```
 
 ## Project Structure

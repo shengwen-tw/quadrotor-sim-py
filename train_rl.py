@@ -257,10 +257,13 @@ class QuadrotorVecEnv(VecEnv):
         x = self.dynamics.get_position()
         v = self.dynamics.get_velocity()
         R = self.dynamics.get_rotmat()
+        Rt = R.transpose(1, 2)
         ex = x - self.curr_xd
         ev = v - self.curr_vd
+        ex_b = (Rt @ ex.unsqueeze(-1)).squeeze(-1)
+        ev_b = (Rt @ ev.unsqueeze(-1)).squeeze(-1)
         euler = TensorSE3.rotmat_to_euler(R)
-        return torch.cat([ex, ev, euler], dim=1).to(self.dtype)
+        return torch.cat([ex_b, ev_b, euler], dim=1).to(self.dtype)
 
     @torch.no_grad()
     def compute_reward(self):
@@ -268,10 +271,13 @@ class QuadrotorVecEnv(VecEnv):
         x = self.dynamics.get_position()
         v = self.dynamics.get_velocity()
         R = self.dynamics.get_rotmat()
+        Rt = R.transpose(1, 2)
         ex = x - self.curr_xd
         ev = v - self.curr_vd
-        norm_ex = torch.linalg.norm(ex, dim=1)
-        norm_ev = torch.linalg.norm(ev, dim=1)
+        ex_b = (Rt @ ex.unsqueeze(-1)).squeeze(-1)
+        ev_b = (Rt @ ev.unsqueeze(-1)).squeeze(-1)
+        norm_ex = torch.linalg.norm(ex_b, dim=1)
+        norm_ev = torch.linalg.norm(ev_b, dim=1)
         reward = -(norm_ex + 0.25*norm_ev)
 
         # Check termination
