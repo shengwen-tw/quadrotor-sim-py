@@ -84,7 +84,8 @@ class QuadrotorVecEnv(VecEnv):
         # Desired trajectory
         self.xd = self.to_tensor(_env.env.xd, dtype=self.dtype)
         self.vd = self.to_tensor(_env.env.vd, dtype=self.dtype)
-        self.yaw_d = self.to_tensor(_env.env.yaw_d, dtype=self.dtype)
+        self.yaw_d = self.new_0_tensor(
+            self.num_envs, _env.env.iterations, dtype=self.dtype)
 
         # Current desired value (i.e., reference signal value)
         self.curr_xd = self.new_0_tensor(self.num_envs, 3, dtype=self.dtype)
@@ -116,6 +117,10 @@ class QuadrotorVecEnv(VecEnv):
 
     def new_0_tensor(self, *shape, dtype=None):
         return torch.zeros(*shape, device=self.device, dtype=dtype)
+
+    def rand_tensor(self, size):
+        return torch.rand(size, generator=self.rng,
+                          device=self.device, dtype=self.dtype)
 
     #======================#
     # Gymnasium VecEnv API #
@@ -230,13 +235,27 @@ class QuadrotorVecEnv(VecEnv):
         self.dynamics.R[idx] = torch.eye(
             3, device=self.device, dtype=self.dtype)
 
-        # Randomize states (TODO)
+        # Randomize states
         if self.training:
             POS_INC_MAX = 1.5
-            noise = 2.0 * torch.rand((idx.numel(), 3), generator=self.rng,
-                                     device=self.device, dtype=self.dtype) - 1.0
+
+            # Randomuze initial position
+            pos_noise = 2.0 * self.rand_tensor((idx.numel(), 3)) - 1.0
             self.dynamics.x[idx] = self.dynamics.x[idx] + \
-                noise * float(POS_INC_MAX)
+                pos_noise * float(POS_INC_MAX)
+
+            # Randomize initial yaw angle
+            yaw_rand = (2.0 * self.rand_tensor((idx.numel(),)) -
+                        1.0) * torch.pi  # [-pi, pi]
+            R_yaw_rand = TensorSE3.euler_to_rotmat(
+                torch.zeros_like(yaw_rand),
+                torch.zeros_like(yaw_rand),
+                yaw_rand
+            )
+            self.dynamics.R[idx] = R_yaw_rand
+
+            # Align yaw trajectory with the randomized yaw angle
+            self.yaw_d[idx, :] = yaw_rand[:, None]
 
         # Refresh desired state
         self.update_desired_state()
@@ -244,10 +263,11 @@ class QuadrotorVecEnv(VecEnv):
     @torch.no_grad()
     def update_desired_state(self):
         idx = torch.clamp(self.idx, 0, self.iterations - 1)  # FIXME
+        env_ids = torch.arange(self.num_envs, device=idx.device)
         self.curr_xd = self.xd[:, idx].transpose(0, 1).contiguous()
         self.curr_vd = self.vd[:, idx].transpose(0, 1).contiguous()
         #self.curr_ad = self.ad[:, idx].transpose(0, 1).contiguous()
-        self.curr_yaw_d = self.yaw_d[idx].contiguous()
+        self.curr_yaw_d = self.yaw_d[env_ids, idx]
         #self.curr_Wd = self.Wd[idx].contiguous()
         #self.curr_W_dot_d = self.W_dot_d[idx].contiguous()
 
